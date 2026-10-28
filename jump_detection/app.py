@@ -8,13 +8,20 @@ from .features import govde_y_hesapla
 
 
 def main():
+    if not MODEL_PATH.is_file():
+        raise SystemExit(
+            f"MediaPipe model dosyasi bulunamadi: {MODEL_PATH}\n"
+            "pose_landmarker_lite.task dosyasini proje kokune yerlestirin. "
+            "Kurulum ayrintilari icin README.md dosyasina bakin."
+        )
+
     import cv2
     import mediapipe as mp
     from mediapipe.tasks import python
     from mediapipe.tasks.python import vision
 
     options = vision.PoseLandmarkerOptions(
-        base_options=python.BaseOptions(model_asset_path=MODEL_PATH),
+        base_options=python.BaseOptions(model_asset_path=str(MODEL_PATH)),
         running_mode=vision.RunningMode.VIDEO,
         num_poses=1
     )

@@ -1,6 +1,8 @@
 """Mevcut prototip ayarlari; davranis korunarak tasindi."""
 
-MODEL_PATH = "pose_landmarker_lite.task"
+from pathlib import Path
+
+MODEL_PATH = Path(__file__).resolve().parent.parent / "pose_landmarker_lite.task"
 
 # Algoritma ayarlari
 KALIBRASYON_SURESI = 3.0
