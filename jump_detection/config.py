@@ -5,7 +5,7 @@ from pathlib import Path
 MODEL_PATH = Path(__file__).resolve().parent.parent / "pose_landmarker_lite.task"
 
 # Algoritma ayarlari
-KALIBRASYON_SURESI = 3.0
+KALIBRASYON_SURESI = 3.0 
 ZIPLAMA_ESIGI = 0.055
 HIZ_ESIGI = 0.12
 BEKLEME_SURESI = 0.65
