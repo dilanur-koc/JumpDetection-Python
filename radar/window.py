@@ -11,6 +11,8 @@ from .protocol import FrameParser, decode_frame
 from .trial import TrialClock, TrialRecorder
 
 
+# Bunlar seçilebilir deney adları, kayıt etiketleri ve kullanıcı yönergeleridir.
+# Ayrı hareket tanıyıcıları değildir; bütün seçeneklerde aynı deneysel sayaç çalışır.
 EXPERIMENTS = {
     "Normal zıplama": ("normal-jump", "Aralarda bekleyerek tam 5 kez zıpla, sonra dur."),
     "Hafif zıplama": ("light-jump", "Aralarda bekleyerek tam 5 hafif zıplama yap, sonra dur."),
@@ -27,12 +29,14 @@ class RadarWindow:
         self.duration, self.output = duration, output
         self.connection = None
         self.recorder = None
+        # İşleri ayır: clock süreyi, counter aday sayımını, parser paketleri yönetir.
         self.clock = TrialClock(duration=duration)
         self.counter = ExperimentalCounter()
         self.parser = FrameParser()
         self.after_id = None
         self.last_frame = None
         self.reported_error = None
+        # Burada pencereyi oluşturuyoruz. Seri port Başlat'a basılana kadar açılmaz.
         root.title("Radar denemesi — deneysel sayaç")
         root.geometry("740x640")
         root.minsize(650, 610)
@@ -63,6 +67,7 @@ class RadarWindow:
         self.start_button.pack(side="left", padx=8)
         self.stop_button = ttk.Button(buttons, text="Durdur", command=lambda: self.finish("stopped"), state="disabled")
         self.stop_button.pack(side="left", padx=8)
+        # Gerçek sayı kullanıcı tarafından girilir; otomatik olarak 5 kabul edilmez.
         actual = ttk.Frame(body)
         actual.pack()
         ttk.Label(actual, text="Gerçekte kaç kez zıpladın?").pack(side="left")
@@ -74,11 +79,14 @@ class RadarWindow:
         self.saved.pack(pady=12)
 
     def start(self):
+        # Önceki denemenin sayısını ve hata bilgisini yeni denemeye taşıma.
         self.recorder = None
         self.counter = ExperimentalCounter(CounterSettings())
         self.reported_error = None
         try:
             import serial
+            # timeout=0 okumayı bekletmez; pencerenin düğmeleri ve saati çalışır.
+            # Baud ve 8N1 ayarları radarın veri çıkışıyla eşleşmelidir.
             self.connection = serial.Serial(port=None, baudrate=self.baud, timeout=0,
                                             bytesize=8, parity="N", stopbits=1)
             self.connection.port = self.port
@@ -86,6 +94,7 @@ class RadarWindow:
             self.connection.rts = False
             self.connection.open()
             self.parser = FrameParser()
+            # Seçim, kaydın hangi deney türüne ait olduğunu belirtir.
             label, instruction = EXPERIMENTS[self.mode.get()]
             self.recorder = TrialRecorder(self.output, label, self.counter.settings,
                                           self.port, self.baud, self.duration)
@@ -98,6 +107,8 @@ class RadarWindow:
             self.actual.delete(0, "end")
             self.count_label.config(text="0")
             self.instruction.config(text="Şimdi sabit dur. BAŞLA yazısını bekle.\n" + instruction)
+            # Deney sürerken yeniden Başlat'a basılmasını ve deney türünün
+            # değiştirilmesini engelle; Durdur düğmesi kullanılabilir kalsın.
             self.start_button.config(state="disabled")
             self.mode_box.config(state="disabled")
             self.stop_button.config(state="normal")
@@ -110,10 +121,13 @@ class RadarWindow:
             self.status.config(text=f"Port açılamadı: {exc}")
 
     def poll(self):
+        # Tkinter bu kısa kontrolü yaklaşık her 30 ms'de tekrar çağırır.
+        # Uzun bir while döngüsü kullanmadığımız için pencere donmadan güncellenir.
         self.after_id = None
         try:
             now = time.monotonic()
-            # Stop by wall clock even when the device stops sending bytes.
+            # Veri kesilirse eski hedefi kullanma. Deney saati yeni paket gelmesini
+            # beklemediğinden bağlantı koptuğunda da süre sonunda durabiliriz.
             if self.last_frame is None or now - self.last_frame > 0.4:
                 self.counter.update(now - self.started_at, [])
             previous_phase = self.clock.phase
@@ -122,10 +136,13 @@ class RadarWindow:
                 self.finish(phase)
                 return
             if phase == "active" and previous_phase != "active":
+                # Hazırlıkta görülen hareketler aktif deneyin sayımına eklenmesin.
                 self.counter.begin_trial()
                 self.recorder.summary["active_started_elapsed_s"] = now - self.started_at
             waiting = self.connection.in_waiting
             if waiting:
+                # Her okumada sınırlı veri al. Bir okumada eksik veya birden çok
+                # paket olabilir; parser bunları ayırıp tamamlanmış paketleri verir.
                 data = self.connection.read(min(waiting, 4096))
                 elapsed = now - self.started_at
                 record = self.recorder.chunk(elapsed, data, phase)
@@ -133,6 +150,8 @@ class RadarWindow:
                     targets = decode_frame(frame)
                     self.last_frame = now
                     detected = self.counter.update(elapsed, targets)
+                    # Ham ölçümleri hazırlıkta da saklarız; aday olayları ve görünen
+                    # sayaç yalnızca aktif deney aşamasında kayda/geçerli sayıya girer.
                     if phase == "active" and detected:
                         self.recorder.event(record, self.counter.count, getattr(self.counter, "last_event", None))
                     self.recorder.frame(record, targets, self.counter.count if phase == "active" else 0, self.counter.status)
@@ -142,6 +161,7 @@ class RadarWindow:
                 self.counter.update(now - self.started_at, [])
                 self.telemetry.config(text="Veri yok / paketler kesildi")
             self.count_label.config(text=str(self.counter.count) if phase == "active" else "0")
+            # Hazırlık ve aktif deney için kullanıcıya farklı renk/yönerge göster.
             if phase == "prepare":
                 remaining = math.ceil(self.clock.remaining(now))
                 self.banner.config(text="SABİT DUR — Hazırlanıyor", fg="#996000")
@@ -161,6 +181,7 @@ class RadarWindow:
             self.status.config(text=f"Okuma hatası: {exc}")
 
     def finish(self, reason):
+        # Düğme, süre sonu, hata veya pencerenin kapanması bu ortak temizliği kullanır.
         cleanup_errors = []
         if self.after_id is not None:
             try:
@@ -169,6 +190,7 @@ class RadarWindow:
                 cleanup_errors.append(str(exc))
             self.after_id = None
         if self.connection is not None:
+            # Seri portu bırak; sonraki deney veya başka uygulama yeniden açabilsin.
             try:
                 self.connection.close()
             except OSError as exc:
@@ -176,6 +198,7 @@ class RadarWindow:
             finally:
                 self.connection = None
         if self.clock.active_at is None:
+            # Deney başlayamadıysa hazırlıktaki olası adayları sonuç diye gösterme.
             self.counter.count = 0
         self.clock.phase = reason
         self.active_announced = False
@@ -185,6 +208,7 @@ class RadarWindow:
             if self.reported_error:
                 self.recorder.summary["error"] = self.reported_error
             try:
+                # Bir kaydetme hatası olsa da düğmeleri tekrar kullanılabilir yap.
                 self.recorder.finish(reason, self.counter.count, self.parser.discarded_bytes, len(self.parser.buffer))
             except OSError as exc:
                 cleanup_errors.append(f"Kayıt tamamlanamadı: {exc}")
@@ -202,6 +226,7 @@ class RadarWindow:
         if cleanup_errors:
             self.status.config(text=" | ".join(cleanup_errors))
         self.instruction.config(text="Artık zıplama. Gerçek zıplama sayını yazıp Sonucu kaydet düğmesine bas.")
+        # Sonuç penceresi açık kalır ama yeni okumalar planlanmadığı için sayı donar.
         self.count_label.config(text=str(self.counter.count))
         self.start_button.config(state="normal")
         self.mode_box.config(state="readonly")
@@ -209,6 +234,7 @@ class RadarWindow:
         self.beep()
 
     def save_actual(self):
+        # Kullanıcının saydığı gerçek adet ile radarın aday adedini ayrı kaydet.
         try:
             self.recorder.report_actual(int(self.actual.get()))
         except (ValueError, OSError) as exc:
@@ -220,6 +246,7 @@ class RadarWindow:
         self.root.bell()
 
     def close(self):
+        # Sağ üstteki X'e basılması da portu ve varsa devam eden kaydı kapatır.
         try:
             if self.connection is not None:
                 self.finish("window_closed")
@@ -228,6 +255,7 @@ class RadarWindow:
 
 
 def main(port="COM5", baud=256000, duration=20, output=Path("recordings/radar")):
+    # mainloop pencere olaylarını işler; RadarWindow yalnızca radar kullanır.
     root = tk.Tk()
     RadarWindow(root, port, baud, duration, output)
     root.mainloop()
