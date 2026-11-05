@@ -1,0 +1,2 @@
+# Kamera ortamini degistirmeden ayri bir Python ortaminda kullanilabilir.
+pyserial==3.5

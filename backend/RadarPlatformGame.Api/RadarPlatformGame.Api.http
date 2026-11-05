@@ -1,0 +1,35 @@
+@baseUrl = http://localhost:5269
+@accessToken = LOGIN_YANITINDAKI_ACCESS_TOKEN
+
+### API ve SQL baglantisini kontrol et.
+GET {{baseUrl}}/api/health
+
+### Hesap olustur. Ornek degerleri kendi kullanici adin ve sifrenle degistir.
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "kullanici_adin",
+  "password": "buraya_kendi_sifreni_yaz"
+}
+
+### Giris yap. Yanittaki accessToken degerini ustteki degiskene yapistir.
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "kullanici_adin",
+  "password": "buraya_kendi_sifreni_yaz"
+}
+
+### Giris yapan kullanicinin profili.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Son 5 oyun sonucu.
+GET {{baseUrl}}/api/game-results
+Authorization: Bearer {{accessToken}}
+
+### Bolum ilerlemesi.
+GET {{baseUrl}}/api/progress
+Authorization: Bearer {{accessToken}}
