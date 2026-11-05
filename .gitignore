@@ -5,3 +5,33 @@ __pycache__/
 pose_landmarker_lite.task
 recordings/
 tmp/
+
+# Unity projesi bu klasörde oluşturulursa üretilen önbellekleri izleme.
+unity/**/Library/
+unity/**/Temp/
+unity/**/Obj/
+unity/**/Logs/
+unity/**/UserSettings/
+unity/**/Build/
+unity/**/Builds/
+unity/**/.vs/
+unity/**/*.csproj
+unity/**/*.sln
+unity/**/*.slnx
+# İlk kopyalama örneği yerelde kalabilir; çalışan kaynak Assets/Scripts içindedir.
+unity/JumpPrototype.cs
+
+# .NET derleme çıktıları ve makineye özel geliştirme dosyaları.
+backend/**/bin/
+backend/**/obj/
+backend/**/.vs/
+*.user
+*.suo
+*.pfx
+*.p12
+*.mdf
+*.ldf
+*.bak
+.env
+.env.*
+appsettings.Local.json

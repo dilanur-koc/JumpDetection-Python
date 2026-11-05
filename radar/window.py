@@ -14,8 +14,8 @@ from .trial import TrialClock, TrialRecorder
 # Bunlar seçilebilir deney adları, kayıt etiketleri ve kullanıcı yönergeleridir.
 # Ayrı hareket tanıyıcıları değildir; bütün seçeneklerde aynı deneysel sayaç çalışır.
 EXPERIMENTS = {
-    "Normal zıplama": ("normal-jump", "Aralarda bekleyerek tam 5 kez zıpla, sonra dur."),
-    "Hafif zıplama": ("light-jump", "Aralarda bekleyerek tam 5 hafif zıplama yap, sonra dur."),
+    "Normal zıplama": ("normal-jump", "Kendi ritminde tam 5 kez zıpla, sonra dur."),
+    "Hafif zıplama": ("light-jump", "Kendi ritminde tam 5 hafif zıplama yap, sonra dur."),
     "Yürüme": ("walking", "Zıplamadan yürü; sayaç artıyor mu kontrol edeceğiz."),
     "Parmak ucuna yükselme": ("tiptoe", "Zıplamadan, aralarda bekleyerek parmak ucuna yüksel."),
     "Çömelme": ("squat", "Zıplamadan, aralarda bekleyerek çömelip doğrul."),
@@ -24,11 +24,14 @@ EXPERIMENTS = {
 
 
 class RadarWindow:
-    def __init__(self, root, port="COM5", baud=256000, duration=20, output=Path("recordings/radar")):
+    def __init__(self, root, port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None):
         self.root, self.port, self.baud = root, port, baud
         self.duration, self.output = duration, output
         self.connection = None
         self.recorder = None
+        # Varsayılan deney yalnızca kaydeder. Oyun gönderimi komutla ayrıca açılır.
+        self.game_port = game_port
+        self.game_publisher = None
         # İşleri ayır: clock süreyi, counter aday sayımını, parser paketleri yönetir.
         self.clock = TrialClock(duration=duration)
         self.counter = ExperimentalCounter()
@@ -61,6 +64,9 @@ class RadarWindow:
         self.telemetry.pack(pady=5)
         self.status = ttk.Label(body, text="Önce varsa kamera penceresini Q ile kapat.", wraplength=650)
         self.status.pack()
+        self.game_status = ttk.Label(body, text=(f"Oyun: 127.0.0.1:{game_port} · deneysel radar girdisi"
+                                               if game_port is not None else "Oyun gönderimi kapalı"), wraplength=650)
+        self.game_status.pack()
         buttons = ttk.Frame(body)
         buttons.pack(pady=12)
         self.start_button = ttk.Button(buttons, text="Başlat", command=self.start)
@@ -98,6 +104,15 @@ class RadarWindow:
             label, instruction = EXPERIMENTS[self.mode.get()]
             self.recorder = TrialRecorder(self.output, label, self.counter.settings,
                                           self.port, self.baud, self.duration)
+            if self.game_port is not None:
+                from game_bridge import GameEventPublisher
+                self.game_publisher = GameEventPublisher("radar", port=self.game_port)
+                self.recorder.summary["game_bridge"] = {
+                    "destination": f"127.0.0.1:{self.game_port}",
+                    "events_sent": 0,
+                    "delivery": "UDP send only; no game acknowledgement",
+                }
+                self.game_status.config(text=f"Oyun: 127.0.0.1:{self.game_port} · deneysel radar girdisi")
             self.started_at = time.monotonic()
             self.clock = TrialClock(duration=self.duration)
             self.clock.start(self.started_at)
@@ -153,7 +168,11 @@ class RadarWindow:
                     # Ham ölçümleri hazırlıkta da saklarız; aday olayları ve görünen
                     # sayaç yalnızca aktif deney aşamasında kayda/geçerli sayıya girer.
                     if phase == "active" and detected:
-                        self.recorder.event(record, self.counter.count, getattr(self.counter, "last_event", None))
+                        details = dict(getattr(self.counter, "last_event", None) or {})
+                        game_event = self.publish_game_event()
+                        if game_event is not None:
+                            details["game_event"] = game_event
+                        self.recorder.event(record, self.counter.count, details)
                     self.recorder.frame(record, targets, self.counter.count if phase == "active" else 0, self.counter.status)
                     active = [f"#{t.slot}: X {t.x_mm} mm · Y {t.y_mm} mm · hız {t.speed_cm_s} cm/sn" for t in targets if t.present]
                     self.telemetry.config(text=" | ".join(active) or "Hedef yok")
@@ -180,9 +199,37 @@ class RadarWindow:
             self.finish("error")
             self.status.config(text=f"Okuma hatası: {exc}")
 
+    def publish_game_event(self):
+        # Yalnız sayılan aktif aday buraya gelir; her radar paketi zıplama isteği değildir.
+        # UDP gönderimi oyunun olayı aldığı anlamına gelmez. Kayıt bu ayrımı korur.
+        if self.game_publisher is None:
+            return None
+        try:
+            event = self.game_publisher.send_jump()
+        except OSError as exc:
+            self.recorder.summary["game_bridge"]["error"] = str(exc)
+            self.game_status.config(text=f"Oyun gönderimi durdu: {exc}. Radar kaydı sürüyor.")
+            publisher = self.game_publisher
+            self.game_publisher = None
+            try:
+                publisher.close()
+            except OSError as close_error:
+                self.recorder.summary["game_bridge"]["close_error"] = str(close_error)
+            return None
+        self.recorder.summary["game_bridge"]["events_sent"] += 1
+        return event
+
     def finish(self, reason):
         # Düğme, süre sonu, hata veya pencerenin kapanması bu ortak temizliği kullanır.
         cleanup_errors = []
+        if self.game_publisher is not None:
+            publisher = self.game_publisher
+            self.game_publisher = None
+            try:
+                publisher.close()
+            except OSError as exc:
+                cleanup_errors.append(f"Oyun portu kapatma: {exc}")
+            self.game_status.config(text="Oyun gönderimi durdu")
         if self.after_id is not None:
             try:
                 self.root.after_cancel(self.after_id)
@@ -254,9 +301,9 @@ class RadarWindow:
             self.root.destroy()
 
 
-def main(port="COM5", baud=256000, duration=20, output=Path("recordings/radar")):
+def main(port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None):
     # mainloop pencere olaylarını işler; RadarWindow yalnızca radar kullanır.
     root = tk.Tk()
-    RadarWindow(root, port, baud, duration, output)
+    RadarWindow(root, port, baud, duration, output, game_port=game_port)
     root.mainloop()
     return 0

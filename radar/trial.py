@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+from .counter import COUNTER_VERSION
+
 
 class TrialClock:
     # Bu sınıf seri port kullanmaz; yalnızca deneyin hangi aşamada olduğunu tutar.
@@ -59,6 +61,7 @@ class TrialRecorder:
             "started_utc": datetime.now(timezone.utc).isoformat(),
             "label": label, "port": port, "baud": baud,
             "test_duration_s": duration, "settings": asdict(settings),
+            "counter_version": COUNTER_VERSION,
             "count_semantics": "Experimental movement candidates; not verified jumps",
             "timestamp_semantics": "Host receive time; frame uses its final chunk time",
             "reported_jump_count": None, "frames": 0, "candidate_events": 0,

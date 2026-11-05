@@ -10,6 +10,10 @@ from math import hypot, isfinite
 from statistics import median
 
 
+# Kayıtlar, eski ve yeni kurallarla alınan sonuçları ayırt edebilsin.
+COUNTER_VERSION = "burst-quiet-v2"
+
+
 @dataclass(frozen=True)
 class CounterSettings:
     # Bunlar üreticinin zıplama kuralları değil, ilk deneme için seçtiğimiz eşiklerdir.
@@ -18,17 +22,21 @@ class CounterSettings:
     quiet_speed_cm_s: float = 8.0
     # Tek bir hız sıçramasının sayılmaması için iki ardışık, yeni ölçüm aranır.
     motion_samples: int = 2
-    quiet_seconds: float = 0.25
+    # Arka arkaya hareketlerde uzun bir sabit duruş istemeyiz. Yine de tek bir
+    # düşük hız örneğiyle yeni harekete geçmemek için iki taze örnek gerekir.
+    quiet_seconds: float = 0.1
+    quiet_samples: int = 2
     # Radar düzlemindeki yer değiştirmedir; dikey zıplama yüksekliği değildir.
     displacement_mm: float = 60.0
     # Başlangıç referansı, tek hedefin yeterince uzun süre sabit görünmesiyle bulunur.
     baseline_seconds: float = 1.0
     baseline_samples: int = 5
     baseline_radius_mm: float = 50.0
-    # Uzun hareket iptal edilir. Yeni sayımdan önce beklenir; veri aralığı ve
+    # 2 saniye zıplamalar arası bekleme değildir; tek adayın zaman aşımıdır.
+    # Yeni sayımdan önce kısa süre beklenir; veri aralığı ve
     # büyük konum sıçraması ise önceki hedefe güvenmeyi bırakmamıza neden olur.
     max_burst_seconds: float = 2.0
-    cooldown_seconds: float = 0.6
+    cooldown_seconds: float = 0.25
     max_gap_seconds: float = 0.4
     max_step_mm: float = 500.0
 
@@ -49,7 +57,7 @@ class CounterSettings:
             raise ValueError("Bekleme suresi negatif olmamali")
         if self.max_burst_seconds <= self.quiet_seconds:
             raise ValueError("Hareket penceresi sessizlik suresinden uzun olmali")
-        for name in ("motion_samples", "baseline_samples"):
+        for name in ("motion_samples", "baseline_samples", "quiet_samples"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 2:
                 raise ValueError(f"{name} en az iki taze ornek olmali")
@@ -130,12 +138,13 @@ class ExperimentalCounter:
         if speed > self.settings.quiet_speed_cm_s:
             self._quiet_points = []
             return False
-        # Hız düşük olsa bile konum hâlâ değişiyorsa durulma süresini baştan başlat.
+        # İlk durulma noktasından 50 mm'den fazla uzaklaşılırsa süreyi baştan başlat.
         if (self._quiet_points and self._distance(
                 point, self._quiet_points[0][1]) > self.settings.baseline_radius_mm):
             self._quiet_points = []
         self._quiet_points.append((now, point))
-        return now - self._quiet_points[0][0] >= self.settings.quiet_seconds
+        return (len(self._quiet_points) >= self.settings.quiet_samples
+                and now - self._quiet_points[0][0] >= self.settings.quiet_seconds)
 
     def update(self, now, targets):
         """Yeni paketi isle; yalniz sayac arttiginda True dondur.
@@ -178,7 +187,8 @@ class ExperimentalCounter:
         self._last_point = point
 
         # Durum akışı: baseline (referans bul) -> ready (hazır) -> burst (hareket)
-        # -> cooldown (sayım sonrası bekle) -> ready. Takip bozulursa baseline'a dön.
+        # -> cooldown (sayım sonrası bekle) -> ready. Uzayan aday recover'a,
+        # gerçek takip bozulması ise baseline'a döner.
         if self._mode == "baseline":
             self.status = "Kalibrasyon: sabit durun"
             if speed > self.settings.quiet_speed_cm_s:
@@ -197,9 +207,11 @@ class ExperimentalCounter:
                 self.status = "Hazir"
             return False
 
-        if self._mode == "cooldown":
-            self.status = "Bekleme: sabit durun"
-            # Sürenin dolması tek başına yetmez; kişinin yeniden durulması gerekir.
+        if self._mode in ("cooldown", "recover"):
+            self.status = ("Bekleme: kisa durulma" if self._mode == "cooldown"
+                           else "Uzun aday iptal; kisa durulma bekleniyor")
+            # Tam bir saniyelik başlangıç kalibrasyonunu her harekette tekrarlama.
+            # Süre tek başına yeni sayım oluşturmaz: kısa durulma da görülmelidir.
             if (self._quiet(now, point, speed)
                     and now - self._last_count_time >= self.settings.cooldown_seconds):
                 self._baseline = self._center(self._quiet_points)
@@ -222,10 +234,18 @@ class ExperimentalCounter:
             self._quiet_points = []
 
         self.status = "Hareket adayi; durulma bekleniyor"
-        # Mevcut kural iki saniyeyi aşan hareketi bırakır. Bu durumda yeni
-        # kararlı referans bulunana kadar başka hareketler sayılamaz.
+        # Uzayan adayı saymadan bırak, fakat kesintisiz izlenen hedefi unutma.
+        # Kısa bir durulmayla toparlan; tekrar başlangıç kalibrasyonuna kilitlenme.
         if now - self._burst_started > self.settings.max_burst_seconds:
-            self._invalidate("Uzun hareket; yeniden kalibrasyon")
+            self._mode = "recover"
+            self.ready = False
+            self._quiet_points = []
+            self._burst_started = None
+            self._motion_streak = 0
+            self._enough_motion = False
+            self._peak_speed = 0.0
+            self._peak_displacement = 0.0
+            self.status = "Uzun aday iptal; kisa durulma bekleniyor"
             return False
         self._motion_streak = (self._motion_streak + 1
                                if speed >= self.settings.motion_speed_cm_s else 0)

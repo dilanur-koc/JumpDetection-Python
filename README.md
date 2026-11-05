@@ -1,4 +1,33 @@
-# Jump Detection — Python
+# NEON / LINK — Radar destekli 2D platform oyunu
+
+Unity 6.6 oyunu, Python LD2450 radar köprüsü ve ASP.NET Core / SQL Server hesap hizmeti.
+Kamera prototipi karşılaştırma aracı olarak korunur. Radar hâlâ deneysel hareket adayları üretir.
+
+## Hızlı başlangıç
+
+1. SQL Server hizmeti çalışsın. Veritabanı `RadarPlatformGameDb` daha önce kurulduysa yeniden oluşturmayın.
+   İlk kurulum: [SQL şeması](backend/database/01_create_database.sql) dosyasının tamamını SSMS'te çalıştırın.
+2. Hesap/sonuç API'sini ayrı PowerShell'de başlatın ve pencereyi açık bırakın:
+
+```powershell
+Set-Location 'C:\Users\Dila\Documents\JumpDetectionTest\backend\RadarPlatformGame.Api'
+dotnet run --launch-profile http
+```
+
+3. Tarayıcıdan `http://localhost:5269/api/health` adresini açın: `status: ok` beklenir.
+4. Unity Hub'da `unity/RadarPlatformGame` klasörünü **6000.6.7f1** ile açın.
+   `Assets/Scenes/Prototype.unity` → Play → Play → Sign in → Select a run → Start run.
+
+Klavye modunda Python gerekmez. Radar için ayrıca Python penceresi açılır; API aynı anda çalışmaya devam eder.
+
+- [5 Kasım ayrıntılı özet, dosya haritası ve tüm çalıştırma komutları](docs/2026-11-05-progress.md)
+- [Unity projesi](unity/README.md)
+- [API projesi ve SQL kurulumu](backend/README.md)
+- [UDP olay sözleşmesi](docs/game-input-contract.md)
+- [Geliştirme planı](docs/development-plan.md)
+
+Bir bölüm oynanabilir, diğer dört bölüm taslak/Coming soon durumundadır. Ses ve müzik henüz eklenmedi.
+Ana menü sabit görsel kullanır; oyun arayüzü İngilizce, kaynak yorumları Türkçedir.
 
 ## Radar denemesi (LD2450)
 
@@ -7,12 +36,13 @@ Kamera uygulamasi `python main.py` olarak kalir. Radar bagimsiz calisir:
 ### Deneysel radar sayaci penceresi
 
 ```powershell
-python -m radar --counter-window --port COM5 --seconds 20
+& "C:\Users\Dila\AppData\Local\Programs\Python\Python312\python.exe" -m radar --counter-window --port COM5 --seconds 20
 ```
 
 Kamera acilmaz. Penceredeki **Baslat** dugmesine basin; 5 saniye sabit durun.
 Tek ve sabit hedef kalibrasyonu tamamlaninca **BASLA** gorunur ve ses duyulur.
-Tam 5 ziplama yapin, aralarda yaklasik 3 saniye bekleyin. **BITTI — DUR**
+Kendi ritminizde tam 5 ziplama yapin; sonrasinda durun. Iki ziplama arasinda
+iki saniye bekleme kurali yoktur. **BITTI — DUR**
 gorununce hareketi bitirin: sayac donar, port kapanir, sonuc penceresi acik
 kalir. Gercek ziplama adedini kendiniz girip **Sonucu kaydet** dugmesine basin.
 Bu sayi otomatik olarak 5 varsayilmaz. Yurumede gercek ziplama adedi 0'dir.
@@ -20,8 +50,10 @@ Hazirlikta 20 saniye icinde kararli tek hedef yoksa deney baslamaz.
 
 Bu arac **deneysel hareket adaylarini** sayar; fiziksel ziplama dogrulamasi
 degildir. Ilk deneme esikleri: en az iki taze olcumde 16 cm/sn hiz,
-60 mm duzlemsel konum degisimi ve en az 0.25 sn durulma; ardindan 0.6 sn
-bekleme. Hazirlik kalibrasyonu en az 1 sn surer. Ayarlar `radar/counter.py`
+60 mm duzlemsel konum degisimi ve en az 0.1 sn/iki taze ornek durulma;
+sayimlar arasinda en az 0.25 sn bekleme. Bu sureler durulma ve hareket
+kosullarini kaldirmaz; sure dolmasi tek basina sayim olusturmaz.
+Hazirlik kalibrasyonu en az 1 sn surer. Ayarlar `radar/counter.py`
 icindeki `CounterSettings` ile tanimlanir ve her denemenin ozetine kaydedilir.
 Esikler bir denemenin sonucunu 5'e esitlemek icin secilmemistir.
 Yurume/comelme de aday sayilabilir; kisa bir yurume + durma hareketinin
@@ -29,6 +61,15 @@ sayilabildigi testlerle acikca belgelenmistir. 0 sonucu da mumkundur.
 Yuva degisimi, birden fazla hedef, veri kaybi ve buyuk konum sicramasi
 bekleyen adayi iptal eder. Sayac bu kontrollerle ayni harekette tekrar
 sayimi sinirlar; kesin kisi takibi veya ziplama siniflandirmasi saglamaz.
+
+`max_burst_seconds=2.0`, iki ziplama arasindaki bekleme degil, tek hareket
+adayinin tamamlanma siniridir. Uzayan aday sayilmadan iptal edilir; hedef
+takibi suruyorsa kisa durulmadan sonra yeni aday degerlendirilebilir.
+Hedef gercekten kaybolursa yine baslangic kalibrasyonu gerekir.
+Yeni denemelerin ozetinde `counter_version=burst-quiet-v2` saklanir.
+Onceki v1 kayitlari eski ayarlar ve sonuclariyla korunur. Kisaltilan sureler
+arka arkaya hareketleri denemek icindir; fiziksel ziplama dogrulugu saglamaz,
+yurumede yanlis sayimi artirabilir.
 
 Pencere ham JSONL, olcum CSV, aday olaylari ve `.summary.json` dosyasi saklar.
 Ozet gercek sayiyi, radar aday sayisini, ayarlari ve tek hedef gorulen aktif
@@ -108,7 +149,7 @@ Kamera ayakları görmediğinde parmak ucuna yükselme hareketi yanlışlıkla z
 
 ## Proje Durumu
 
-Geliştirme aşamasındadır. Gelecekte radar entegrasyonu planlanmaktadır.
+Unity oyunu, API/SQL hesap sistemi ve Python olay köprüsü çalışır durumdaki prototiplerdir. Radarın fiziksel zıplamayı güvenilir ayırması hâlâ doğrulama gerektirir.
 
 ## Modüler yapı
 
@@ -132,7 +173,7 @@ Model yolu artık komutu çalıştırdığınız klasörden bağımsızdır. Dos
 Python 3.12 ile proje kökünden:
 
 ```bash
-python -m compileall -q main.py jump_detection tests
+python -m compileall -q main.py jump_detection radar game_bridge tests
 python -m unittest discover -s tests -v
 ```
 
@@ -144,4 +185,5 @@ GitHub Actions aynı kontrolleri çalıştırır. Bu kontroller kalibrasyon, eş
 
 Bu düzenleme algılama eşiklerini değiştirmez. Yükselme görüntü yüksekliğine göre normalize koordinat, hız ise bu koordinat/saniye cinsindedir; santimetre ölçümü değildir. Mevcut karar ayak temasını denetlemediği için ayaklar görünse bile parmak ucuna yükselme yanlış pozitif oluşturabilir.
 
-Geliştirme ve elle doğrulama sırası için [geliştirme planına](docs/development-plan.md) bakın. Radar okuyucu ve Unity bağlantısı henüz uygulanmamıştır.
+Geliştirme ve elle doğrulama sırası için [geliştirme planına](docs/development-plan.md)
+bakın. Güncel uygulama ve doğrulama sınırları 5 Kasım özetinde açıklanır.

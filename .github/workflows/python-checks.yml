@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'codex/**'
+      - 'work/**'
   pull_request:
     branches:
       - main
@@ -22,6 +23,17 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check Python syntax
-        run: python -m compileall -q main.py jump_detection tests
+        run: python -m compileall -q main.py jump_detection radar game_bridge tests
       - name: Test without camera or model
         run: python -m unittest discover -s tests -v
+
+  api-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build API without a running database
+        run: dotnet build backend/RadarPlatformGame.Api/RadarPlatformGame.Api.csproj --configuration Release

@@ -18,6 +18,13 @@ def positive(value):
     return number
 
 
+def udp_port(value):
+    number = int(value)
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError("Oyun portu 1-65535 arasinda olmali")
+    return number
+
+
 def live_chunks(port, baud, seconds):
     # PySerial yalnızca canlı okumada yüklenir; kayıt tekrarı donanım istemez.
     try:
@@ -68,13 +75,19 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path("recordings/radar"))
     parser.add_argument("--replay", type=Path, help="Ham JSONL kaydini donanimsiz yeniden cozumle")
     parser.add_argument("--counter-window", action="store_true", help="Deneysel aday sayaci ve sureli deney penceresi")
+    parser.add_argument("--game-events", action="store_true", help="Aktif deneydeki adaylari yerel Unity prototipine gonder")
+    parser.add_argument("--game-port", type=udp_port, default=5065, help="Yerel oyun UDP portu (varsayilan: 5065)")
     args = parser.parse_args(argv)
+    if args.game_events and not args.counter_window:
+        parser.error("--game-events yalnizca --counter-window ile kullanilabilir")
     if args.counter_window:
         # İsteğe bağlı pencere, yalnız radar kullanan süreli sayaç denemesini açar.
         # Tk arayüzünü bu dalda yüklemek, normal terminal kullanımını bağımsız tutar.
         if args.replay:
             parser.error("Pencere canli deney icindir; --replay ile birlikte kullanilamaz")
         from .window import main as window_main
+        if args.game_events:
+            return window_main(args.port, args.baud, args.seconds, args.output, game_port=args.game_port)
         return window_main(args.port, args.baud, args.seconds, args.output)
     args.output.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")

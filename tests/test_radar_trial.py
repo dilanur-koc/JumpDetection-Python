@@ -57,6 +57,7 @@ class TrialTests(unittest.TestCase):
             self.assertEqual(summary["candidate_count"], 1)
             self.assertEqual(summary["single_target_active_frames"], 1)
             self.assertEqual(summary["settings"]["motion_speed_cm_s"], 16)
+            self.assertEqual(summary["counter_version"], "burst-quiet-v2")
             recorder.report_actual(0)
             self.assertEqual(json.loads(recorder.summary_path.read_text(encoding="utf-8"))["reported_jump_count"], 0)
             with recorder.base.with_suffix(".csv").open(encoding="utf-8") as stream:

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from radar.protocol import FrameParser, decode_frame, signed_value
 from radar.__main__ import main
@@ -62,3 +63,22 @@ class RadarTests(unittest.TestCase):
             source.write_text("", encoding="utf-8")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["--replay", str(source), "--output", str(Path(folder) / "out")]), 2)
+
+    def test_game_events_require_live_counter_window(self):
+        for args in (["--game-events"], ["--counter-window", "--game-events", "--replay", "input.jsonl"],
+                     ["--counter-window", "--game-events", "--game-port", "65536"]):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as result:
+                    main(args)
+                self.assertEqual(result.exception.code, 2)
+
+    def test_game_forwarding_is_opt_in(self):
+        try:
+            import radar.window
+        except ImportError:
+            self.skipTest("Tk kurulu degil")
+        with patch("radar.window.main", return_value=0) as launch:
+            self.assertEqual(main(["--counter-window"]), 0)
+            self.assertNotIn("game_port", launch.call_args.kwargs)
+            self.assertEqual(main(["--counter-window", "--game-events", "--game-port", "5066"]), 0)
+            self.assertEqual(launch.call_args.kwargs["game_port"], 5066)
