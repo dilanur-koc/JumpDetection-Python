@@ -69,7 +69,8 @@ Sayıların eşitliği fiziksel zıplama doğruluğunu göstermez. Havada ikinci
 ## Öğrenme ve doğrulama
 
 Hız, ilk zıplama hızı ve yerçekimi için Play kapalıyken Prototype → Inspector → Hareket ayarları.
-Kod yorumları Türkçedir. Varsayılan hız 3.5, zıplama 11.5 ve yerçekimi çarpanı 2.5'tir.
+Varsayılan ilerleme hızı 2.8, ilk zıplama hızı 11.5 ve yerçekimi çarpanı 2.5'tir.
+Engel merkezleri 7 birim aralıklıdır. Varsayılan hızda iki engel arasında 2.5 saniye vardır.
 
 [Ayrıntılı çalışma özeti, API uçları ve sınırlar](../docs/2026-11-05-progress.md).
 Python testleri ve API derlemesi CI'da çalışır; Unity için otomatik lisanslı CI henüz kurulmadı.

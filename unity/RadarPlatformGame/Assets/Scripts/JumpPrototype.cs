@@ -24,7 +24,7 @@ public class JumpPrototype : MonoBehaviour
     [SerializeField, InspectorName("Otomatik ilerleme")] private bool autoRun = true;
     [Header("Hareket ayarları")]
     // Dünya birimi/saniye. Radar denemesinde tepki vermek için daha rahat ilerleme.
-    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 3.5f;
+    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 2.8f;
     // Dünya birimi/saniye cinsinden ilk yukarı hız. Bu değer doğrudan yükseklik değildir.
     // Yaklaşık yükselme miktarı = jumpSpeed² / (2 * yerçekimi ivmesinin büyüklüğü).
     [Tooltip("İlk dikey hız. Artırınca kare daha yükseğe zıplar.")]
@@ -57,7 +57,7 @@ public class JumpPrototype : MonoBehaviour
     private Rigidbody2D player;
     private Collider2D floor, playerCollider;
     private readonly List<Collider2D> obstacles = new List<Collider2D>();
-    private const float FinishX = 28; // Karenin bu X konumuna ulaşması bölümü bitirir.
+    private const float FinishX = 34; // Karenin bu X konumuna ulaşması bölümü bitirir.
     private Camera gameCamera;
     private int worldCullingMask;
     private PrototypeCharacter character;
@@ -139,15 +139,13 @@ public class JumpPrototype : MonoBehaviour
         camera.transform.position = new Vector3(-6, 0, -10);
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = backgroundColor;
-        floor = Box("Zemin", new Vector2(12, -2.25f), new Vector2(48, 0.5f),
+        floor = Box("Zemin", new Vector2(15, -2.25f), new Vector2(54, 0.5f),
             backgroundColor, true).GetComponent<Collider2D>();
         // Fizik yüzeyi aynı yerde kalır. Görünümü ayrı, hacimli platform panelleri çizer.
         floor.GetComponent<SpriteRenderer>().enabled = false;
         CreateStageSurface();
-        // İlk engel başlangıçtan uzağa alındı: 3.5 hızda temas yaklaşık 5.2 saniye sonra.
-        // Üç saniyelik geri sayım buna eklenir. Radar yine BAŞLA diyene kadar sabit durulmalı.
-        // Sonraki engeller arasında yaklaşık 1.4 saniyelik ilerleme mesafesi vardır.
-        float[] obstaclePositions = { 11, 16, 21, 26 };
+        // Engel merkezleri 7 birim aralıklı: 2.8 hızda aralarında 2.5 saniye var.
+        float[] obstaclePositions = { 11, 18, 25, 32 };
         foreach (float x in obstaclePositions)
         {
             GameObject block = Box("Engel", new Vector2(x, -1.6f), new Vector2(0.8f, 0.8f), Color.Lerp(backgroundColor, obstacleColor, 0.3f), true);
@@ -219,7 +217,7 @@ public class JumpPrototype : MonoBehaviour
         stageSurfaceTexture.SetPixels(pixels);
         stageSurfaceTexture.Apply(false, true);
         stageSurfaceSprite = Sprite.Create(stageSurfaceTexture, new Rect(0, 0, width, height), Vector2.one * 0.5f, 64);
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 18; i++)
         {
             GameObject panel = new GameObject("Platform paneli");
             panel.transform.SetParent(transform, false);
