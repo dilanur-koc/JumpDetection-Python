@@ -11,14 +11,16 @@ from statistics import median
 
 
 # Kayıtlar, eski ve yeni kurallarla alınan sonuçları ayırt edebilsin.
-COUNTER_VERSION = "burst-quiet-v2"
+COUNTER_VERSION = "burst-quiet-v5-demo"
 
 
 @dataclass(frozen=True)
 class CounterSettings:
     # Bunlar üreticinin zıplama kuralları değil, ilk deneme için seçtiğimiz eşiklerdir.
     # Birimler alan adlarında belirtilir: cm_s = cm/s, mm = milimetre, seconds = saniye.
-    motion_speed_cm_s: float = 16.0
+    # Daha küçük hareketleri denemek için 16 -> 12 cm/sn indirildi.
+    # Yürüyüş/küçük sallanma da daha kolay sayılabilir; fiziksel test gerekir.
+    motion_speed_cm_s: float = 12.0
     quiet_speed_cm_s: float = 8.0
     # Tek bir hız sıçramasının sayılmaması için iki ardışık, yeni ölçüm aranır.
     motion_samples: int = 2
@@ -27,7 +29,8 @@ class CounterSettings:
     quiet_seconds: float = 0.1
     quiet_samples: int = 2
     # Radar düzlemindeki yer değiştirmedir; dikey zıplama yüksekliği değildir.
-    displacement_mm: float = 60.0
+    # 60 -> 30 mm: bu değer gerçek zıplama yüksekliği değildir.
+    displacement_mm: float = 30.0
     # Başlangıç referansı, tek hedefin yeterince uzun süre sabit görünmesiyle bulunur.
     baseline_seconds: float = 1.0
     baseline_samples: int = 5
@@ -39,8 +42,22 @@ class CounterSettings:
     cooldown_seconds: float = 0.25
     max_gap_seconds: float = 0.4
     max_step_mm: float = 500.0
+    # None tüm alanı korur. Seçilen yarıçap dışındaki hedefler sayaca katılmaz.
+    max_distance_mm: float | None = None
+    # Yalnız açıkça seçilen sunum modu: doğrulanmış zıplama sınıflandırıcısı değildir.
+    demo_mode: bool = False
+
+    @classmethod
+    def for_demo(cls, max_distance_mm=None):
+        return cls(demo_mode=True, max_distance_mm=max_distance_mm,
+                   displacement_mm=15.0, cooldown_seconds=0.8)
 
     def __post_init__(self):
+        if not isinstance(self.demo_mode, bool):
+            raise ValueError("demo_mode bool olmali")
+        if self.max_distance_mm is not None and (
+                not isfinite(self.max_distance_mm) or self.max_distance_mm <= 0):
+            raise ValueError("max_distance_mm pozitif ve sonlu olmali")
         # Ayarlar oluşturulurken anlamsız değerleri reddet; hatayı deneyde bekletme.
         for name in (
             "motion_speed_cm_s", "quiet_seconds", "displacement_mm",
@@ -166,6 +183,17 @@ class ExperimentalCounter:
                 self._invalidate("Veri araligi; yeniden kalibrasyon")
         self._last_time = now
         active = [target for target in targets if target.present]
+        if self.settings.max_distance_mm is not None:
+            # Önce ham ölçümleri doğrula; bozuk bir hedefi alan dışında diye gizleme.
+            if any(not all(isfinite(v) for v in (t.x_mm, t.y_mm, t.speed_cm_s))
+                   for t in active):
+                self._invalidate("Gecersiz hedef verisi")
+                return False
+            had_targets = bool(active)
+            active = [t for t in active if hypot(t.x_mm, t.y_mm) <= self.settings.max_distance_mm]
+            if had_targets and not active:
+                self._invalidate("Oyun alaninda hedef yok")
+                return False
         # Bu deney tek kişiliktir. Birden fazla hedefin verisini aynı kişiye bağlama.
         if len(active) != 1:
             self._invalidate("Hedef yok" if not active else "Birden fazla hedef")
@@ -219,6 +247,25 @@ class ExperimentalCounter:
                 self.ready = True
                 self.status = "Hazir"
             return False
+
+        if self.settings.demo_mode and self._mode == "ready":
+            displacement = self._distance(point, self._baseline)
+            self.status = "DEMO hazir: hareket bekleniyor"
+            if (speed < self.settings.motion_speed_cm_s
+                    or displacement < self.settings.displacement_mm):
+                return False
+            # Gerçek radar verisi tetikler; iki ardışık hız ve hareket sonu beklenmez.
+            # Tek örnek daha duyarlıdır, oturmak/yürümek de olay oluşturabilir.
+            self.count += 1
+            self._last_count_time = now
+            self.last_event = {"started_at_s": now, "ended_at_s": now,
+                               "peak_speed_cm_s": speed, "displacement_mm": displacement,
+                               "demo_mode": True, "trigger": "radar_motion_onset"}
+            self.ready = False
+            self._mode = "cooldown"
+            self._quiet_points = []
+            self.status = "DEMO hareketi gonderildi; yeniden kurma icin kisa durulma"
+            return True
 
         if self._mode == "ready":
             if speed <= self.settings.quiet_speed_cm_s:
@@ -276,8 +323,15 @@ class ExperimentalCounter:
             self.status = "Aday sayildi; bekleme"
             return True
         # Durulan hareket koşulları sağlamadıysa sayma; yeni konumdan devam et.
+        reasons = []
+        if not self._enough_motion:
+            reasons.append(f"{self.settings.motion_samples} ardisik hiz olcumu yok (tepe {self._peak_speed:g} cm/sn)")
+        if self._peak_displacement < self.settings.displacement_mm:
+            reasons.append(f"yer degistirme {self._peak_displacement:.0f}/{self.settings.displacement_mm:g} mm")
+        if now - self._last_count_time < self.settings.cooldown_seconds:
+            reasons.append("sayim sonrasi bekleme")
         self._baseline = self._center(self._quiet_points)
         self._mode = "ready"
         self.ready = True
-        self.status = "Hazir"
+        self.status = "Son hareket sayilmadi: " + "; ".join(reasons)
         return False

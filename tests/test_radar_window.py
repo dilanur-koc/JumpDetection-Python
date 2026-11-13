@@ -9,7 +9,7 @@ except ImportError:
     RadarWindow = None  # Tk is optional on headless CI systems.
 
 from radar.counter import ExperimentalCounter
-from radar.protocol import FrameParser
+from radar.protocol import FrameParser, decode_frame
 from radar.trial import TrialClock
 
 
@@ -36,9 +36,53 @@ class WindowControllerTests(unittest.TestCase):
         window.mode = Mock()
         window.mode.get.return_value = "Normal zıplama"
         for name in ("banner", "timer", "count_label", "instruction", "status", "telemetry",
-                     "saved", "start_button", "stop_button", "save_button", "mode_box"):
+                     "saved", "start_button", "stop_button", "save_button", "mode_box", "range_box", "continuous_box", "demo_box"):
             setattr(window, name, Mock())
         return window
+
+    def test_start_applies_demo_choice_and_records_its_settings(self):
+        for demo in (False, True):
+            with self.subTest(demo=demo):
+                window = self.make_window()
+                window.range_mm = Mock()
+                window.range_mm.get.return_value = "2500"
+                window.demo_game = Mock()
+                window.demo_game.get.return_value = demo
+                window.continuous = Mock()
+                window.continuous.get.return_value = True
+                window.duration, window.port, window.baud = 120, "COM5", 256000
+                window.output = "unused-output"
+                window.actual = Mock()
+                window.poll = Mock()
+                with patch("serial.Serial"), patch("radar.window.TrialRecorder") as recorder:
+                    window.start()
+                self.assertIsNone(window.reported_error)
+                self.assertEqual(window.counter.settings.demo_mode, demo)
+                self.assertEqual(window.counter.settings.displacement_mm, 15 if demo else 30)
+                self.assertIsNone(window.clock.duration)
+                self.assertEqual(recorder.call_args.args[2], window.counter.settings)
+                window.poll.assert_called_once()
+
+    def test_poll_uses_first_valid_frame_at_start_and_after_gap(self):
+        # A quiet target at about 1.7 m. The frame must be used for calibration.
+        frame = bytes.fromhex("AA FF 03 00 0E 03 B1 86 00 00 40 01" + " 00" * 16 + " 55 CC")
+        for previous_frame in (None, 104.6):
+            with self.subTest(previous_frame=previous_frame):
+                window = self.make_window()
+                window.last_frame = previous_frame
+                if previous_frame is not None:
+                    target = decode_frame(frame)
+                    for index in range(13):
+                        window.counter.update(3.4 + index / 10, target)
+                    self.assertTrue(window.counter.ready)
+                window.connection.in_waiting = len(frame)
+                window.connection.read.return_value = frame
+                with patch("radar.window.time.monotonic", return_value=105.1):
+                    window.poll()
+                self.assertEqual(window.clock.phase, "prepare")
+                self.assertFalse(window.counter.ready)
+                self.assertEqual(len(window.counter._baseline_points), 1)
+                self.assertEqual(window.recorder.frame.call_args.args[3], "Kalibrasyon: sabit durun")
 
     def test_deadline_closes_port_and_stops_polling_without_new_bytes(self):
         window = self.make_window()
@@ -52,6 +96,23 @@ class WindowControllerTests(unittest.TestCase):
         window.root.after.assert_not_called()
         window.recorder.finish.assert_called_once()
         window.banner.config.assert_called_with(text="BİTTİ — DUR", fg="#a52020")
+
+    def test_continuous_game_keeps_polling_past_two_minutes_without_data(self):
+        window = self.make_window()
+        window.clock = TrialClock(duration=None)
+        window.clock.start(100)
+        window.clock.advance(105, True)
+        window.session_continuous = True
+        connection = window.connection
+        with patch("radar.window.time.monotonic", return_value=300):
+            window.poll()
+        self.assertEqual(window.clock.phase, "active")
+        connection.close.assert_not_called()
+        window.recorder.finish.assert_not_called()
+        window.root.after.assert_called_once()
+        window.timer.config.assert_called_with(text="Sürekli oyun açık · Durdur ile biter")
+        window.finish("stopped")
+        connection.close.assert_called_once()
 
     def test_preparation_times_out_and_cannot_show_preparation_count(self):
         window = self.make_window()
@@ -96,6 +157,7 @@ class WindowControllerTests(unittest.TestCase):
         window.connection.read.return_value = bytes.fromhex(
             "AA FF 03 00 0E 03 B1 86 10 00 40 01" + " 00" * 16 + " 55 CC")
         window.counter = Mock(ready=True, count=1, status="Aday sayildi", last_event={"peak_speed_cm_s": 24})
+        window.counter.settings.demo_mode = False
         window.counter.update.return_value = True
         window.game_publisher = Mock()
         window.game_publisher.send_jump.return_value = {"source": "radar", "sequence": 1}
@@ -108,6 +170,7 @@ class WindowControllerTests(unittest.TestCase):
             window.poll()
         window.game_publisher.send_jump.assert_called_once_with()
         self.assertEqual(window.recorder.summary["game_bridge"]["events_sent"], 1)
+        self.assertIn("Gönderilen: 1", window.game_status.config.call_args.kwargs["text"])
         details = window.recorder.event.call_args.args[2]
         self.assertEqual(details["game_event"]["source"], "radar")
         self.assertEqual(details["peak_speed_cm_s"], 24)

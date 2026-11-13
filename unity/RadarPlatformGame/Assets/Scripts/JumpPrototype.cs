@@ -23,8 +23,8 @@ public class JumpPrototype : MonoBehaviour
     [SerializeField] private string apiBaseUrl = "http://localhost:5269";
     [SerializeField, InspectorName("Otomatik ilerleme")] private bool autoRun = true;
     [Header("Hareket ayarları")]
-    // Dünya birimi/saniye. 5.2 değeri, kareyi her saniye 5.2 birim ilerletir.
-    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 5.2f;
+    // Dünya birimi/saniye. Radar denemesinde tepki vermek için daha rahat ilerleme.
+    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 3.5f;
     // Dünya birimi/saniye cinsinden ilk yukarı hız. Bu değer doğrudan yükseklik değildir.
     // Yaklaşık yükselme miktarı = jumpSpeed² / (2 * yerçekimi ivmesinin büyüklüğü).
     [Tooltip("İlk dikey hız. Artırınca kare daha yükseğe zıplar.")]
@@ -50,9 +50,9 @@ public class JumpPrototype : MonoBehaviour
     [SerializeField, Range(0, 0.25f), InspectorName("Uzak zeminin görünürlüğü")] private float distantVisibility = 0.025f;
     [SerializeField, Range(0, 0.2f), InspectorName("Karenin parıltısı")] private float squareGlow = 0.025f;
     // Seçilen kaynak yalnız zıplama isteğinin nereden geleceğini belirler.
-    private enum InputSource { Keyboard, Simulator, Radar }
+    private enum InputSource { Keyboard, Simulator, Radar, Camera }
     private InputSource source = InputSource.Keyboard;
-    private readonly string[] sourceNames = { "Keyboard", "Simulation", "Experimental radar" };
+    private readonly string[] sourceNames = { "Keyboard", "Simulation", "Experimental radar", "Camera" };
     // Rigidbody2D hız ve yerçekimini, Collider2D yüzey temaslarını yönetir.
     private Rigidbody2D player;
     private Collider2D floor, playerCollider;
@@ -79,9 +79,11 @@ public class JumpPrototype : MonoBehaviour
     // jumpPending tek fizik adımında tüketilen istek, running turun devam durumudur.
     private bool jumpPending, running;
     private bool roundStarted;
+    private bool waitingForInput;
     private float runStartsAt;
+    private string jumpStatus = "No request";
     // UDP paketleri, kabul edilen istekler ve gerçekleşen zıplamalar ayrı sayılır.
-    private int requests, jumps, udpPackets;
+    private int requests, jumps, udpPackets, localSimulationRequests;
     private string lastRejection = "—";
     private string result = "", connectionStatus = "Keyboard selected";
 
@@ -142,8 +144,10 @@ public class JumpPrototype : MonoBehaviour
         // Fizik yüzeyi aynı yerde kalır. Görünümü ayrı, hacimli platform panelleri çizer.
         floor.GetComponent<SpriteRenderer>().enabled = false;
         CreateStageSurface();
-        // Parkurun engel konumları. Yeni bir X değeri eklemek yeni bir engel oluşturur.
-        float[] obstaclePositions = { -1, 8, 17, 23 };
+        // İlk engel başlangıçtan uzağa alındı: 3.5 hızda temas yaklaşık 5.2 saniye sonra.
+        // Üç saniyelik geri sayım buna eklenir. Radar yine BAŞLA diyene kadar sabit durulmalı.
+        // Sonraki engeller arasında yaklaşık 1.4 saniyelik ilerleme mesafesi vardır.
+        float[] obstaclePositions = { 11, 16, 21, 26 };
         foreach (float x in obstaclePositions)
         {
             GameObject block = Box("Engel", new Vector2(x, -1.6f), new Vector2(0.8f, 0.8f), Color.Lerp(backgroundColor, obstacleColor, 0.3f), true);
@@ -254,8 +258,19 @@ public class JumpPrototype : MonoBehaviour
         restart = Input.GetKeyDown(KeyCode.R);
 #endif
         if (restart) RestartRound();
-        if (source == InputSource.Keyboard && space) jumpPending = true;
+        if (source == InputSource.Keyboard && space) RequestJump();
+        else if (source == InputSource.Simulator && space) SimulateJump();
         ReceiveEvents();
+    }
+
+    // Paketin kabulü ile fiziksel zıplama ayrı aşamalardır. Erken/geç istek nedeni görünür kalır.
+    private void RequestJump()
+    {
+        if (!roundStarted) { jumpStatus = "Press START RUN first"; return; }
+        if (!running) { jumpStatus = "Run already ended"; return; }
+        if (Time.time < runStartsAt) { jumpStatus = "Countdown not finished"; return; }
+        jumpPending = true;
+        jumpStatus = "Queued for physics";
     }
 
     // Unity fizik adımlarında çalışır. Kare hızı değişse de fizik düzenli adımlarla ilerler.
@@ -272,16 +287,33 @@ public class JumpPrototype : MonoBehaviour
         if (player.position.x >= FinishX) { Finish("Finish reached!"); return; }
         if (player.position.y < -5) { Finish("You fell. Press R to reset."); return; }
         Vector2 velocity = player.linearVelocity;
+        // Radar/simülasyon hazır değilken kareyi engele yürütme.
+        // İlk geçerli zıplama gerçekleştiğinde yürüyüş ve tur süresi birlikte başlar.
+        if (waitingForInput && !jumpPending)
+        {
+            velocity.x = 0;
+            player.linearVelocity = velocity;
+            return;
+        }
         // Yatay hız doğrudan hedef değere atanır. Kademeli yatay hızlanma uygulanmaz.
         // Otomatik modda +moveSpeed, manuel modda yön * moveSpeed kullanılır.
-        velocity.x = autoRun ? moveSpeed : horizontal * moveSpeed;
+        velocity.x = waitingForInput ? 0 : (autoRun ? moveSpeed : horizontal * moveSpeed);
         // İstek yalnız bu fizik adımında kullanılır; havada bekletilip inişte çalışmaz.
         // Zıplama için hem istek hem zemin teması gerekir. Havada ikinci kez zıplanmaz.
         if (jumpPending && playerCollider.IsTouching(floor) && velocity.y <= 0.05f)
         {
             velocity.y = jumpSpeed; // Zıplamanın ilk dikey hızı burada uygulanır.
             jumps++;
+            jumpStatus = "Jump applied";
+            if (waitingForInput)
+            {
+                waitingForInput = false;
+                runStartsAt = Time.time;
+                velocity.x = autoRun ? moveSpeed : horizontal * moveSpeed;
+            }
         }
+        else if (jumpPending)
+            jumpStatus = playerCollider.IsTouching(floor) ? "Still moving upward" : "No floor contact / airborne";
         jumpPending = false;
         // Hız zaten birim/saniye cinsindedir. Burada deltaTime ile çarpılmaz.
         // Sonraki adımlarda yerçekimi dikey hızı azaltır, tepe noktasından sonra negatife çevirir.
@@ -317,7 +349,9 @@ public class JumpPrototype : MonoBehaviour
         jumpPending = false;
         // Bitmiş tur bir kez kaydedilir. Skor şimdilik parkur ilerlemesi * 1000'dir.
         int duration = Mathf.RoundToInt(Mathf.Clamp((Time.time - runStartsAt) * 1000, 0, int.MaxValue));
-        account.SaveRound(Score, duration, roundInputSource, player.position.x >= FinishX);
+        // Kamera antrenmani sonuclari bu ekranda kalir; API yalniz kayitli kaynaklari destekler.
+        if (!IsCameraPractice)
+            account.SaveRound(Score, duration, roundInputSource, player.position.x >= FinishX);
     }
 
     // Yeni denemede konumu, hızı, görsel izi ve tur sayaçlarını başlangıca döndürür.
@@ -331,9 +365,11 @@ public class JumpPrototype : MonoBehaviour
         gameCamera.transform.position = new Vector3(-6, 0, -10);
         running = true;
         roundStarted = false;
+        waitingForInput = false;
+        jumpStatus = "No request";
         runStartsAt = Time.time;
         result = "";
-        requests = jumps = 0;
+        requests = jumps = localSimulationRequests = 0;
         jumpPending = false;
         OpenReceiver();
     }
@@ -383,7 +419,7 @@ public class JumpPrototype : MonoBehaviour
                 if (message == null) continue;
                 requests++;
                 connectionStatus = "Event received · " + sourceNames[(int)source];
-                if (running) jumpPending = true;
+                RequestJump();
             }
             catch (SocketException exc)
             {
@@ -411,10 +447,15 @@ public class JumpPrototype : MonoBehaviour
         if (message == null || message.schema_version != 1 || message.event_type != "jump_request"
             || message.sequence < 1 || message.session_id == null
             || !Regex.IsMatch(message.session_id, "\\A[0-9a-f]{32}\\z")) return Reject("Invalid event, session or sequence");
-        string wanted = source == InputSource.Simulator ? "simulator" : "radar";
-        string evidence = source == InputSource.Simulator ? "simulated" : "motion_candidate";
+        (string wanted, string evidence, bool experimental) = source switch
+        {
+            InputSource.Simulator => ("simulator", "simulated", false),
+            InputSource.Radar => ("radar", "motion_candidate", true),
+            InputSource.Camera => ("camera", "camera_estimate", true),
+            _ => ("", "", false),
+        };
         if (source == InputSource.Keyboard || message.source != wanted || message.evidence != evidence
-            || message.experimental != (source == InputSource.Radar)) return Reject("Selected source mismatch");
+            || message.experimental != experimental) return Reject("Selected source mismatch");
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // 1 saniyeden eski olaylar elenir. Gelecek zamana en fazla 250 ms tolerans vardır.
         if (message.sent_at_unix_ms <= now - 1000) return Reject("Packet older than 1 second");
@@ -477,6 +518,7 @@ public class JumpPrototype : MonoBehaviour
     public int Score => Mathf.RoundToInt(Progress * 1000);
     public int JumpCount => jumps;
     public float Countdown => roundStarted ? Mathf.Max(0, runStartsAt - Time.time) : 0;
+    public bool AwaitingInput => roundStarted && running && waitingForInput && Countdown <= 0;
     public string ResultText => result;
     public int SourceSelection => (int)source;
     // Tam ekran menü resmi açıkken arkasında kalan parkur gereksiz yere çizilmez.
@@ -484,11 +526,33 @@ public class JumpPrototype : MonoBehaviour
     {
         if (gameCamera != null) gameCamera.cullingMask = visible ? worldCullingMask : 0;
     }
-    public string SourceLabel => source == InputSource.Radar ? "RADAR" : source == InputSource.Simulator ? "SIM" : "KEYBOARD";
+    public bool IsCameraPractice => source == InputSource.Camera;
+    public string SourceLabel => source switch
+    {
+        InputSource.Radar => "RADAR",
+        InputSource.Simulator => "SIM",
+        InputSource.Camera => "CAMERA PRACTICE",
+        _ => "KEYBOARD",
+    };
     public string DiagnosticText => "Input / " + sourceNames[(int)source]
         + "\nRaw UDP " + udpPackets + " · Accepted " + requests + " · Jumps " + jumps
         + "\n" + connectionStatus + "\nLast rejection / " + lastRejection
+        + "\nLocal SIM " + localSimulationRequests + " · Jump status / " + jumpStatus
+        + "\nRun / " + (!roundStarted ? "Not started" : !running ? "Finished" : Countdown > 0 ? "Countdown" : waitingForInput ? "Waiting for first event" : "Active")
+        + " · Floor / " + (playerCollider != null && floor != null && playerCollider.IsTouching(floor) ? "yes" : "no")
         + "\nDisplay / approx. " + Mathf.RoundToInt(1 / Mathf.Max(Time.smoothDeltaTime, 0.001f)) + " FPS";
+
+    // Yerel simülasyon, UDP üreticisi açmadan aynı tur/fizik kontrollerini sınar.
+    // Radar modunda bu yol kapalıdır; gerçek algılama gibi gösterilmez.
+    public bool CanSimulateJump => source == InputSource.Simulator && account != null
+        && account.IsAuthenticated && !account.IsBusy && roundStarted && running && Countdown <= 0;
+    public void SimulateJump()
+    {
+        if (!CanSimulateJump) return;
+        localSimulationRequests++;
+        RequestJump();
+    }
+    public string InputStatus => connectionStatus + " · " + jumpStatus;
 
     public void SelectSource(int selection)
     {
@@ -509,8 +573,9 @@ public class JumpPrototype : MonoBehaviour
         if (account == null || !account.IsAuthenticated || account.IsBusy) return;
         RestartRound();
         roundStarted = true;
+        waitingForInput = source != InputSource.Keyboard;
         runStartsAt = Time.time + 3;
-        roundInputSource = source == InputSource.Radar ? "radar" : source == InputSource.Simulator ? "simulator" : "keyboard";
+        roundInputSource = source.ToString().ToLowerInvariant();
     }
 
     // Bileşen kapatıldığında port serbest bırakılır, yeniden açılınca alıcı kurulur.

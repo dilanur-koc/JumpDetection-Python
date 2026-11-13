@@ -179,6 +179,34 @@ class RadarCounterTests(unittest.TestCase):
             self.counter.update(t, [target(x, speed)])
         self.assertEqual(self.counter.count, 0)
 
+    def test_smaller_slower_bout_counts_with_sensitive_defaults_but_not_old_settings(self):
+        # Hassas ayarda kabul ettiğimiz küçük hareket: eski iki eşiği de aşmıyor.
+        # Bu test bir insanın zıpladığını değil, eşik farkını doğrular.
+        for settings, expected in ((CounterSettings(), 1),
+                                   (CounterSettings(motion_speed_cm_s=16,
+                                                    displacement_mm=60), 0)):
+            with self.subTest(settings=settings):
+                self.counter = ExperimentalCounter(settings)
+                self.calibrate()
+                results = []
+                for now, x, speed in ((1.2, 30, 12), (1.3, 40, 14),
+                                       (1.4, 35, 0), (1.52, 35, 0),
+                                       (1.7, 35, 0), (1.84, 35, 0)):
+                    results.append(self.counter.update(now, [target(x, speed)]))
+                self.assertEqual(sum(results), expected)
+                self.assertEqual(self.counter.count, expected)
+
+    def test_sensitive_defaults_still_require_speed_and_displacement_together(self):
+        # Yalnız hız veya yalnız yer değiştirme yeni ayarda da yeterli değil.
+        for movement in (((1.2, 35, 10), (1.3, 40, 11)),
+                         ((1.2, 10, 12), (1.3, 20, 14))):
+            with self.subTest(movement=movement):
+                self.counter = ExperimentalCounter()
+                self.calibrate()
+                for now, x, speed in (*movement, (1.4, 20, 0), (1.52, 20, 0)):
+                    self.assertFalse(self.counter.update(now, [target(x, speed)]))
+                self.assertEqual(self.counter.count, 0)
+
     def test_equal_timestamp_does_not_supply_second_motion_sample(self):
         self.calibrate()
         self.counter.update(1.2, [target(80, 24)])
@@ -263,11 +291,61 @@ class RadarCounterTests(unittest.TestCase):
         self.burst()
         self.assertEqual(self.counter.count, 1)
 
+    def test_range_excludes_far_target_without_resetting_near_burst(self):
+        self.counter = ExperimentalCounter(CounterSettings(max_distance_mm=2500))
+        self.calibrate()
+        far = Target(2, True, 893, 3896, 96, 320)
+        for time, x, speed in ((1.2, 80, 16), (1.28, 100, 24),
+                               (1.36, 90, 8), (1.48, 90, 0)):
+            self.counter.update(time, [target(x, speed), far])
+        self.assertEqual(self.counter.count, 1)
+
+    def test_range_still_rejects_two_people_inside_area(self):
+        self.counter = ExperimentalCounter(CounterSettings(max_distance_mm=2500))
+        self.calibrate()
+        self.counter.update(1.2, [target(80, 16), target(300, slot=2)])
+        self.assertFalse(self.counter.ready)
+        self.assertEqual(self.counter.status, "Birden fazla hedef")
+        self.assertEqual(self.counter.count, 0)
+
+    def test_outside_area_cannot_calibrate_or_complete_pending_burst(self):
+        self.counter = ExperimentalCounter(CounterSettings(max_distance_mm=2500))
+        self.calibrate()
+        self.counter.update(1.2, [target(80, 16)])
+        self.counter.update(1.28, [target(100, 24)])
+        self.counter.update(1.36, [Target(1, True, 0, 3000, 0, 320)])
+        self.assertFalse(self.counter.ready)
+        self.assertEqual(self.counter.status, "Oyun alaninda hedef yok")
+        self.assertEqual(self.counter.count, 0)
+        self.counter.update(1.48, [target(90)])
+        self.assertEqual(self.counter.count, 0)
+        self.assertFalse(self.counter.ready)
+
+    def test_range_is_opt_in_and_includes_boundary(self):
+        self.calibrate()
+        self.counter.update(1.2, [target(), Target(2, True, 0, 4000, 0, 320)])
+        self.assertEqual(self.counter.status, "Birden fazla hedef")
+        counter = ExperimentalCounter(CounterSettings(max_distance_mm=1000))
+        for i in range(12):
+            counter.update(i / 10, [target()])
+        self.assertTrue(counter.ready)
+        for value in (0, -1, float("inf"), float("nan")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                CounterSettings(max_distance_mm=value)
+
+    def test_rejected_motion_explains_speed_or_displacement_condition(self):
+        self.calibrate()
+        for time, x, speed in ((1.2, 80, 16), (1.28, 90, 8), (1.4, 90, 0)):
+            self.counter.update(time, [target(x, speed)])
+        self.assertEqual(self.counter.count, 0)
+        self.assertIn("ardisik hiz olcumu yok", self.counter.status)
+        self.assertTrue(self.counter.ready)
+
     def test_settings_serializable_and_invalid_values_rejected(self):
         settings = asdict(CounterSettings())
-        self.assertEqual(settings["motion_speed_cm_s"], 16.0)
+        self.assertEqual(settings["motion_speed_cm_s"], 12.0)
         self.assertEqual(settings["motion_samples"], 2)
-        self.assertEqual(settings["displacement_mm"], 60.0)
+        self.assertEqual(settings["displacement_mm"], 30.0)
         self.assertEqual(settings["quiet_seconds"], .1)
         self.assertEqual(settings["quiet_samples"], 2)
         self.assertEqual(settings["cooldown_seconds"], .25)

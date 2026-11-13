@@ -82,3 +82,15 @@ class RadarTests(unittest.TestCase):
             self.assertNotIn("game_port", launch.call_args.kwargs)
             self.assertEqual(main(["--counter-window", "--game-events", "--game-port", "5066"]), 0)
             self.assertEqual(launch.call_args.kwargs["game_port"], 5066)
+
+
+class RadarRangeCliTests(unittest.TestCase):
+    def test_range_reaches_window_and_invalid_range_is_rejected(self):
+        with patch("radar.window.main", return_value=0) as launch:
+            self.assertEqual(main(["--counter-window", "--game-events", "--max-distance-mm", "2500"]), 0)
+            self.assertEqual(launch.call_args.kwargs["max_distance_mm"], 2500)
+        for args in (["--max-distance-mm", "2500"],
+                     ["--counter-window", "--max-distance-mm", "nan"],
+                     ["--counter-window", "--max-distance-mm", "0"]):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(args)

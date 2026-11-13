@@ -77,7 +77,13 @@ def main(argv=None):
     parser.add_argument("--counter-window", action="store_true", help="Deneysel aday sayaci ve sureli deney penceresi")
     parser.add_argument("--game-events", action="store_true", help="Aktif deneydeki adaylari yerel Unity prototipine gonder")
     parser.add_argument("--game-port", type=udp_port, default=5065, help="Yerel oyun UDP portu (varsayilan: 5065)")
+    parser.add_argument("--max-distance-mm", type=positive, help="Sayac icin oyun alani yaricapi; varsayilan sinirsiz")
+    parser.add_argument("--demo-game", action="store_true", help="Acikca secilen kolay radar hareket tetikleme; ziplama siniflandiricisi degildir")
     args = parser.parse_args(argv)
+    if args.demo_game and not (args.counter_window and args.game_events):
+        parser.error("--demo-game icin --counter-window ve --game-events gerekli")
+    if args.max_distance_mm is not None and not args.counter_window:
+        parser.error("--max-distance-mm yalnizca --counter-window ile kullanilabilir")
     if args.game_events and not args.counter_window:
         parser.error("--game-events yalnizca --counter-window ile kullanilabilir")
     if args.counter_window:
@@ -86,9 +92,14 @@ def main(argv=None):
         if args.replay:
             parser.error("Pencere canli deney icindir; --replay ile birlikte kullanilamaz")
         from .window import main as window_main
+        options = {}
         if args.game_events:
-            return window_main(args.port, args.baud, args.seconds, args.output, game_port=args.game_port)
-        return window_main(args.port, args.baud, args.seconds, args.output)
+            options["game_port"] = args.game_port
+        if args.demo_game:
+            options["demo_game"] = True
+        if args.max_distance_mm is not None:
+            options["max_distance_mm"] = args.max_distance_mm
+        return window_main(args.port, args.baud, args.seconds, args.output, **options)
     args.output.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Ham JSONL özgün baytları, CSV ise çözümlenmiş ölçümleri saklar.

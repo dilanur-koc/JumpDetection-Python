@@ -14,7 +14,7 @@ public sealed class PrototypeInterface : MonoBehaviour
     private string userName = "", password = "";
     private bool registering, history, diagnostics, hadSession, showFps;
     private GUIStyle label, small, caption, heading, brand, menu, button, field, number;
-    private readonly string[] inputNames = { "KEYBOARD", "SIMULATION", "RADAR" };
+    private readonly string[] inputNames = { "KEYBOARD", "SIMULATION", "RADAR", "CAMERA" };
 
     // Play sırasında kod yenilenirse eski ekrandan kalan GUIStyle nesneleri tekrar kullanılmaz.
     private void OnEnable()
@@ -66,6 +66,18 @@ public sealed class PrototypeInterface : MonoBehaviour
                 else if (game.Countdown > 0)
                     GUI.Label(new Rect(width / 2 - 90, height / 2 - 80, 180, 150),
                         Mathf.CeilToInt(game.Countdown).ToString(), number);
+                else if (game.AwaitingInput)
+                {
+                    GUI.Label(new Rect(width / 2 - 230, height / 2 - 110, 460, 45),
+                        game.SourceSelection == 1 ? "WAITING FOR SIMULATION" : "JUMP TO START", heading);
+                    GUI.Label(new Rect(width / 2 - 230, height / 2 - 54, 460, 50),
+                        game.SourceSelection switch
+                        {
+                            1 => "Press SPACE or SIM JUMP to start the run.",
+                            2 => "Wait for radar calibration, then make your first jump.",
+                            _ => "Wait for READY in the camera window, then jump.",
+                        }, small);
+                }
                 if (diagnostics) DrawDiagnostics(width, height);
             }
             else
@@ -170,7 +182,7 @@ public sealed class PrototypeInterface : MonoBehaviour
                 GUI.Label(new Rect(card.x + 16, card.y + 93, 132, 45), available ? "FIRST CONTACT" : "COMING SOON", caption);
                 GUI.Label(new Rect(card.x + 16, card.y + 138, 132, 20), available ? "READY TO PLAY" : "IN DEVELOPMENT", caption);
             }
-            int selection = GUI.Toolbar(new Rect(left, top + 340, 500, 40), game.SourceSelection, inputNames, button);
+            int selection = GUI.Toolbar(new Rect(left, top + 340, 620, 40), game.SourceSelection, inputNames, button);
             if (selection != game.SourceSelection) game.SelectSource(selection);
             GUI.Label(new Rect(left, top + 392, 850, 38), SourceHint(), small);
             if (ActionButton(new Rect(left, top + 445, 250, 46), "START RUN")) { game.RetryRun(); page = Page.Run; }
@@ -183,8 +195,10 @@ public sealed class PrototypeInterface : MonoBehaviour
 
     private string SourceHint()
     {
-        return game.SourceSelection == 2 ? "Wait for the radar window to be ready, then start. Radar detection is experimental."
-            : game.SourceSelection == 1 ? "Start the run, wait for the countdown, then send jump events from the Python simulator."
+        if (game.IsCameraPractice) return "Open the Python camera window and follow its framing instructions.";
+
+        return game.SourceSelection == 2 ? "After the countdown, the square waits for your first radar jump. Stay still until radar calibration is ready."
+            : game.SourceSelection == 1 ? "After the countdown, press SPACE or SIM JUMP. Python simulator events also work."
             : "Automatic movement. Press SPACE to jump. Press R to return to run selection.";
     }
 
@@ -198,6 +212,14 @@ public sealed class PrototypeInterface : MonoBehaviour
         GUI.enabled = true;
         if (TextButton(new Rect(width - 122, 26, 90, 30), "DEBUG")) diagnostics = !diagnostics;
         GUI.Label(new Rect(36, height - 42, 350, 22), game.SourceLabel, caption);
+        if (game.SourceSelection == 1 && game.IsRunning)
+        {
+            GUI.enabled = game.CanSimulateJump;
+            if (ActionButton(new Rect(36, height - 108, 210, 46), "SIM JUMP  /  SPACE")) game.SimulateJump();
+            GUI.enabled = true;
+        }
+        if (game.SourceSelection != 0 && game.IsRunning)
+            GUI.Label(new Rect(36, 92, width - 310, 62), game.InputStatus, small);
     }
 
     private void DrawResult(float width, float height)
@@ -206,7 +228,8 @@ public sealed class PrototypeInterface : MonoBehaviour
         Fill(new Rect(left - 28, top - 22, 586, 280), new Color(0.015f, 0.025f, 0.055f, 0.72f));
         GUI.Label(new Rect(left, top, 530, 50), game.Progress >= 1 ? "RUN COMPLETE" : "TRY AGAIN", heading);
         GUI.Label(new Rect(left, top + 66, 530, 30), "SCORE  " + game.Score + "     /     JUMPS  " + game.JumpCount, small);
-        GUI.Label(new Rect(left, top + 108, 530, 36), account.Message, small);
+        GUI.Label(new Rect(left, top + 104, 530, 28), game.ResultText, small);
+        GUI.Label(new Rect(left, top + 136, 530, 32), game.IsCameraPractice ? "Camera practice · score for this run" : account.Message, small);
         GUI.enabled = !account.IsBusy;
         if (ActionButton(new Rect(left, top + 174, 245, 44), "RETRY")) game.RetryRun();
         if (TextButton(new Rect(left + 275, top + 180, 245, 32), "SELECT A RUN")) { game.ReturnToLobby(); page = Page.Levels; }
@@ -252,13 +275,13 @@ public sealed class PrototypeInterface : MonoBehaviour
         if (TextButton(new Rect(left, top - 50, 120, 32), "‹  HOME")) page = Page.Home;
         GUI.Label(new Rect(left, top, 520, 60), "HOW TO PLAY", heading);
         GUI.Label(new Rect(left, top + 95, 450, 330),
-            "Keep moving. Jump at the right moment.\n\nKEYBOARD\nSPACE to jump. R to reset.\n\nRADAR\nConnect the sensor and run the Python radar bridge. Detection is experimental.\n\nSIMULATION\nSend jump events from the Python simulator.", small);
+            "Keep moving. Jump at the right moment.\n\nKEYBOARD\nSPACE to jump. R to reset.\n\nRADAR\nConnect the sensor and run the Python radar bridge. Detection is experimental.\n\nSIMULATION\nSPACE or SIM JUMP to jump. Python simulator events also work.", small);
     }
 
     private void DrawDiagnostics(float width, float height)
     {
-        Fill(new Rect(width - 440, height - 210, 408, 150), new Color(0.01f, 0.02f, 0.04f, 0.72f));
-        GUI.Label(new Rect(width - 424, height - 196, 376, 125), game.DiagnosticText, small);
+        Fill(new Rect(width - 440, height - 252, 408, 192), new Color(0.01f, 0.02f, 0.04f, 0.72f));
+        GUI.Label(new Rect(width - 424, height - 238, 376, 170), game.DiagnosticText, small);
     }
 
     private bool MenuButton(Rect rect, string text)

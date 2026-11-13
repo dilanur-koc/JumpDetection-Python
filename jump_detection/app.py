@@ -5,9 +5,10 @@ import time
 from .config import BAGLANTILAR, MODEL_PATH
 from .detector import reset, update
 from .features import govde_y_hesapla
+from .game_detector import BodySample, CameraGameDetector, UpperBodySample
 
 
-def main():
+def main(*, camera_index=0, game_port=None, upper_body=False):
     if not MODEL_PATH.is_file():
         raise SystemExit(
             f"MediaPipe model dosyasi bulunamadi: {MODEL_PATH}\n"
@@ -27,17 +28,25 @@ def main():
     )
 
     landmarker = vision.PoseLandmarker.create_from_options(options)
-    kamera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    kamera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
 
     if not kamera.isOpened():
+        kamera.release()
         landmarker.close()
         raise SystemExit("Kamera acilamadi!")
 
     durum = reset()
+    game_detector = CameraGameDetector(upper_body=upper_body) if game_port is not None else None
+    publisher = None
     baslangic = time.monotonic()
     son_zaman_ms = -1
 
     try:
+        if game_detector is not None:
+            from game_bridge import GameEventPublisher
+
+            publisher = GameEventPublisher("camera", game_port)
+            print("Unity: CAMERA sec, START RUN ve geri sayimi bekle.")
         while True:
             basarili, goruntu = kamera.read()
 
@@ -66,8 +75,8 @@ def main():
             mesaj = "BODY NOT DETECTED"
             renk = (0, 0, 255)
 
-            if sonuc.pose_landmarks:
-                noktalar = sonuc.pose_landmarks[0]
+            noktalar = sonuc.pose_landmarks[0] if sonuc.pose_landmarks else None
+            if noktalar:
 
                 for a, b in BAGLANTILAR:
                     p1, p2 = noktalar[a], noktalar[b]
@@ -88,6 +97,19 @@ def main():
                             4, (0, 0, 255), -1
                         )
 
+            if game_detector is not None:
+                sample = None
+                if noktalar:
+                    sample = (UpperBodySample.from_landmarks(noktalar, w / h) if upper_body
+                              else BodySample.from_landmarks(noktalar))
+                if game_detector.update(simdi, sample):
+                    try:
+                        publisher.send_jump()
+                    except OSError as exc:
+                        raise SystemExit(f"Unity oyun olayi gonderilemedi: {exc}") from exc
+                mesaj = game_detector.status
+                renk = (0, 255, 0) if mesaj.startswith(("READY", "JUMP", "MOTION")) else (0, 165, 255)
+            elif noktalar:
                 gerekli = [11, 12, 23, 24]
 
                 if all(noktalar[i].visibility > 0.6 for i in gerekli):
@@ -117,9 +139,12 @@ def main():
                 cv2.FONT_HERSHEY_SIMPLEX, 0.75, renk, 2
             )
 
+            count_label = "UPPER BODY MOTION" if upper_body else "CAMERA JUMPS"
+            count_text = (f"{count_label}: {game_detector.count} | UDP SENT: {publisher.sequence}"
+                          if game_detector is not None else f"JUMP COUNT: {durum['sayac']}")
             cv2.putText(
                 goruntu,
-                f"JUMP COUNT: {durum['sayac']}",
+                count_text,
                 (20, 75),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.85, (255, 255, 255), 2
@@ -132,7 +157,10 @@ def main():
                 0.55, (255, 255, 255), 1
             )
 
-            cv2.imshow("Jump Detection - Prototype v1", goruntu)
+            window_title = "Jump Detection - Prototype v1"
+            if game_detector is not None:
+                window_title = "Camera to Unity - Upper body" if upper_body else "Camera to Unity"
+            cv2.imshow(window_title, goruntu)
 
             tus = cv2.waitKey(1) & 0xFF
 
@@ -140,9 +168,13 @@ def main():
                 break
             elif tus == ord("r"):
                 durum = reset()
+                if game_detector is not None:
+                    game_detector = CameraGameDetector(upper_body=upper_body)
                 print("Kalibrasyon ve sayac sifirlandi!")
 
     finally:
+        if publisher is not None:
+            publisher.close()
         kamera.release()
         landmarker.close()
         cv2.destroyAllWindows()

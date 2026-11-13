@@ -49,8 +49,8 @@ Bu sayi otomatik olarak 5 varsayilmaz. Yurumede gercek ziplama adedi 0'dir.
 Hazirlikta 20 saniye icinde kararli tek hedef yoksa deney baslamaz.
 
 Bu arac **deneysel hareket adaylarini** sayar; fiziksel ziplama dogrulamasi
-degildir. Ilk deneme esikleri: en az iki taze olcumde 16 cm/sn hiz,
-60 mm duzlemsel konum degisimi ve en az 0.1 sn/iki taze ornek durulma;
+degildir. Hassas deneme esikleri: en az iki taze olcumde 12 cm/sn hiz,
+30 mm duzlemsel konum degisimi ve en az 0.1 sn/iki taze ornek durulma;
 sayimlar arasinda en az 0.25 sn bekleme. Bu sureler durulma ve hareket
 kosullarini kaldirmaz; sure dolmasi tek basina sayim olusturmaz.
 Hazirlik kalibrasyonu en az 1 sn surer. Ayarlar `radar/counter.py`
@@ -66,10 +66,13 @@ sayimi sinirlar; kesin kisi takibi veya ziplama siniflandirmasi saglamaz.
 adayinin tamamlanma siniridir. Uzayan aday sayilmadan iptal edilir; hedef
 takibi suruyorsa kisa durulmadan sonra yeni aday degerlendirilebilir.
 Hedef gercekten kaybolursa yine baslangic kalibrasyonu gerekir.
-Yeni denemelerin ozetinde `counter_version=burst-quiet-v2` saklanir.
-Onceki v1 kayitlari eski ayarlar ve sonuclariyla korunur. Kisaltilan sureler
-arka arkaya hareketleri denemek icindir; fiziksel ziplama dogrulugu saglamaz,
-yurumede yanlis sayimi artirabilir.
+6 Kasim'da kullanici istegiyle hiz 16'dan 12 cm/sn'ye, duzlemsel yer
+degistirme 60'tan 30 mm'ye indirildi. Sure ve taze ornek kontrolleri korundu.
+Yeni denemelerin ozetinde `counter_version=burst-quiet-v5-demo` saklanir.
+Onceki v1/v2 kayitlari eski ayarlar ve sonuclariyla korunur. Daha dusuk esikler
+kucuk hareketleri denemek icindir; fiziksel ziplama dogrulugu saglamaz ve
+yurumede yanlis sayimi artirabilir. Acik radar penceresi yeni kodu almaz;
+degisiklikten sonra pencereyi kapatip ayni komutla yeniden baslatin.
 
 Pencere ham JSONL, olcum CSV, aday olaylari ve `.summary.json` dosyasi saklar.
 Ozet gercek sayiyi, radar aday sayisini, ayarlari ve tek hedef gorulen aktif
@@ -187,3 +190,40 @@ Bu düzenleme algılama eşiklerini değiştirmez. Yükselme görüntü yüksekl
 
 Geliştirme ve elle doğrulama sırası için [geliştirme planına](docs/development-plan.md)
 bakın. Güncel uygulama ve doğrulama sınırları 5 Kasım özetinde açıklanır.
+
+
+### Radar oyun alanı
+
+Uzakta raporlanan ek hedefler tek kişilik sayacı yeniden kalibrasyona döndürebilir.
+Sayaç penceresindeki **Oyun alanı yarıçapı (mm)** ile yalnız oyuncunun alanını seçin;
+`2500`, radarın merkezinden 2,5 metre yarıçap demektir. Varsayılan `Tümü`dür.
+Komutta `--counter-window --game-events --max-distance-mm 2500` kullanılabilir.
+Seçim Başlat sırasında uygulanır ve kayıt özetinin `settings.max_distance_mm`
+alanında saklanır. Ham ölçümler alan dışındaki hedefler dahil korunur.
+Alan içinde birden fazla hedef görülürse sayaç yine adayı iptal eder.
+Bu seçenek hareketi dikey zıplama olarak doğrulamaz.
+
+
+`--game-events` ile açılan pencerede **Sürekli oyun** varsayılan olarak seçilidir.
+Başlat sonrasında kalibrasyon tamamlanınca Durdur'a veya pencerenin kapatılmasına
+kadar olay gönderimi sürer; `--seconds 120` oyun köprüsünü iki dakikada kesmez.
+Süreli deney için Başlat'tan önce Sürekli oyun seçimini kaldırın.
+Özet kaydında sürekli oturumlar `session_mode: continuous`, `test_duration_s: null`
+olarak belirtilir. İlk kalibrasyon yine 20 saniyede tamamlanamazsa oturum durur.
+
+
+Radarla oyun için Unity ve radar penceresi birlikte açık kalır. Başlatma sırası
+[Unity kurulumunda](unity/README.md#python-girdileri) anlatılır.
+
+### Gösterim için radar demo modu
+
+`python -m radar --counter-window --game-events --max-distance-mm 2500 --demo-game`
+ile açıkça seçilir. Normal sayaç varsayılanı değişmez. Pencerede **DEMO** seçimi,
+aktif başlıkta demo bilgisi, kayıt ayarlarında `demo_mode: true` görünür.
+Demo tek, kalibre edilmiş hedefin en az 12 cm/sn hız ve 15 mm yer değiştirme
+ölçümünde hemen hareket olayı gönderir; iki ardışık hız örneğini veya hareket
+sonunu beklemez. Sonraki tetik için 0,8 saniye bekleme ve kısa durulma gerekir.
+Veri kesintisi, hedef kaybı, alan içinde çoklu hedef ve 500 mm konum sıçraması
+korumaları sürer. Oyun kaynağı RADAR olarak seçilir; gönderim gerçek radar
+hareketinden gelir. Oturmak, yürümek veya başka hareketler de tetikleyebilir;
+bu mod doğrulanmış zıplama sayacı olarak sunulmamalıdır.

@@ -17,7 +17,8 @@ dotnet run --launch-profile http
 6. Play → Play → Sign in → Select a run → giriş kaynağı → Start run.
 
 Kare otomatik ilerler. Keyboard: Space zıplama, R bölüm seçimine dönüş.
-Üç saniyelik geri sayımın ardından tur başlar. 01 oynanabilir; 02–05 henüz geliştirilmedi.
+Üç saniyelik geri sayımın ardından klavye turu başlar. Simülasyon, radar ve kamera
+turlarında kare ilk uygulanabilir zıplamayı bekler. 01 oynanabilir. 02–05 geliştirme aşamasındadır.
 
 ## Dosyalar
 
@@ -42,13 +43,25 @@ Radar seçili kullanımda PySerial kurulu Python ile:
 
 ```powershell
 Set-Location 'C:\Users\Dila\Documents\JumpDetectionTest'
-& 'C:\Users\Dila\AppData\Local\Programs\Python\Python312\python.exe' -m radar --counter-window --game-events --port COM5 --seconds 20
+python -m radar --counter-window --game-events --port COM5 --max-distance-mm 2500 --demo-game
 ```
 
-Radar penceresinde Başlat → BAŞLA; ardından Unity'de Start run. COM5 yerel porttur.
-Yalnız aktif deney adayları gönderilir; 20 saniye sonunda deney ve gönderim biter.
-API hesabı/sonuçları, UDP 5065 zıplama olaylarını taşır. `game_bridge listen` Unity ile aynı portu paylaşamaz.
-Kamera oyuna bağlı değildir; radar algılaması hâlâ deneysel hareket adayıdır.
+Unity'de **RADAR → START RUN** seç. Ayrı radar penceresinde **Başlat**'a bas.
+**DEMO AÇIK** ve Unity'de **JUMP TO START** göründüğünde hareket et.
+Radar penceresi tur boyunca açık ve aktif kalır. COM5 yerine kendi seri portunu kullan.
+Sürekli oyun seçiliyken gönderim **Durdur** ile sonlanır. Demo modunda oturma
+ve yürüme gibi hareketler de olayı tetikleyebilir.
+
+Laptop kamerasıyla oynamak için Unity'de **CAMERA** seç ve proje kökünde çalıştır:
+
+```powershell
+& '.\.venv\Scripts\python.exe' main.py --game-events --upper-body
+```
+
+Baş ve iki omuz kadrajda olmalı. Kamera **READY** gösterdiğinde ve oyun geri
+sayımı bittiğinde zıpla. Kamera turunun skoru sonuç ekranında gösterilir.
+API hesap ve kayıtlı sonuçları, UDP 5065 zıplama olaylarını taşır.
+`game_bridge listen` Unity ile aynı portu paylaşamaz.
 
 Game ekranındaki Debug, ham UDP/kabul/zıplama sayılarını ve ret nedenini gösterir.
 Sayıların eşitliği fiziksel zıplama doğruluğunu göstermez. Havada ikinci zıplama uygulanmaz.
@@ -56,7 +69,7 @@ Sayıların eşitliği fiziksel zıplama doğruluğunu göstermez. Havada ikinci
 ## Öğrenme ve doğrulama
 
 Hız, ilk zıplama hızı ve yerçekimi için Play kapalıyken Prototype → Inspector → Hareket ayarları.
-Kod yorumları Türkçedir. En son varsayılan hız 5.2, zıplama 11.5 ve yerçekimi çarpanı 2.5'tir.
+Kod yorumları Türkçedir. Varsayılan hız 3.5, zıplama 11.5 ve yerçekimi çarpanı 2.5'tir.
 
 [Ayrıntılı çalışma özeti, API uçları ve sınırlar](../docs/2026-11-05-progress.md).
 Python testleri ve API derlemesi CI'da çalışır; Unity için otomatik lisanslı CI henüz kurulmadı.

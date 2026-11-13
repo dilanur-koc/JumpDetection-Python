@@ -21,6 +21,23 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(clock.advance(127, False), "done")
         self.assertEqual(clock.advance(200, True), "done")
 
+    def test_continuous_game_does_not_expire_at_trial_duration(self):
+        clock = TrialClock(duration=None)
+        clock.start(100)
+        self.assertEqual(clock.advance(104, True), "prepare")
+        self.assertEqual(clock.advance(105, True), "active")
+        self.assertEqual(clock.advance(225, False), "active")
+        self.assertEqual(clock.advance(10000, False), "active")
+        self.assertIsNone(clock.remaining(10000))
+        clock.phase = "stopped"
+        self.assertEqual(clock.advance(10001, True), "stopped")
+
+    def test_continuous_mode_still_requires_initial_calibration(self):
+        clock = TrialClock(duration=None)
+        clock.start(0)
+        self.assertEqual(clock.advance(20, False), "no_baseline")
+        self.assertIsNone(clock.active_at)
+
     def test_no_data_preparation_times_out(self):
         clock = TrialClock()
         clock.start(10)
@@ -56,8 +73,9 @@ class TrialTests(unittest.TestCase):
             self.assertIsNone(summary["reported_jump_count"])
             self.assertEqual(summary["candidate_count"], 1)
             self.assertEqual(summary["single_target_active_frames"], 1)
-            self.assertEqual(summary["settings"]["motion_speed_cm_s"], 16)
-            self.assertEqual(summary["counter_version"], "burst-quiet-v2")
+            self.assertEqual(summary["settings"]["motion_speed_cm_s"], 12)
+            self.assertEqual(summary["settings"]["displacement_mm"], 30)
+            self.assertEqual(summary["counter_version"], "burst-quiet-v5-demo")
             recorder.report_actual(0)
             self.assertEqual(json.loads(recorder.summary_path.read_text(encoding="utf-8"))["reported_jump_count"], 0)
             with recorder.base.with_suffix(".csv").open(encoding="utf-8") as stream:

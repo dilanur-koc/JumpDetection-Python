@@ -24,7 +24,7 @@ EXPERIMENTS = {
 
 
 class RadarWindow:
-    def __init__(self, root, port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None):
+    def __init__(self, root, port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None, max_distance_mm=None, demo_game=False):
         self.root, self.port, self.baud = root, port, baud
         self.duration, self.output = duration, output
         self.connection = None
@@ -40,16 +40,16 @@ class RadarWindow:
         self.last_frame = None
         self.reported_error = None
         # Burada pencereyi oluşturuyoruz. Seri port Başlat'a basılana kadar açılmaz.
-        root.title("Radar denemesi — deneysel sayaç")
-        root.geometry("740x640")
-        root.minsize(650, 610)
+        root.title("Radar — DEMO hareket kontrolü" if demo_game else "Radar — Sürekli oyun" if game_port is not None else "Radar denemesi — deneysel sayaç")
+        root.geometry("740x780")
+        root.minsize(650, 770)
         root.protocol("WM_DELETE_WINDOW", self.close)
         body = ttk.Frame(root, padding=22)
         body.pack(fill="both", expand=True)
         ttk.Label(body, text="Yalnızca radar · Kamera kullanılmıyor", font=("Segoe UI", 15, "bold")).pack()
         self.banner = tk.Label(body, text="HAZIR — Başlat düğmesine bas", font=("Segoe UI", 20, "bold"), fg="#174566")
         self.banner.pack(pady=(18, 6))
-        self.timer = ttk.Label(body, text=f"5 sn hazırlık + {duration:g} sn deneme", font=("Segoe UI", 15))
+        self.timer = ttk.Label(body, text="5 sn hazırlık + sürekli oyun" if game_port is not None else f"5 sn hazırlık + {duration:g} sn deneme", font=("Segoe UI", 15))
         self.timer.pack()
         self.count_label = ttk.Label(body, text="0", font=("Segoe UI", 66, "bold"))
         self.count_label.pack()
@@ -58,6 +58,20 @@ class RadarWindow:
         self.mode = tk.StringVar(value="Normal zıplama")
         self.mode_box = ttk.Combobox(body, textvariable=self.mode, values=list(EXPERIMENTS), state="readonly", width=30)
         self.mode_box.pack()
+        ttk.Label(body, text="Oyun alanı yarıçapı (mm) · boş/Tümü: sınır yok").pack(pady=(8, 0))
+        self.range_mm = tk.StringVar(value="Tümü" if max_distance_mm is None else f"{max_distance_mm:g}")
+        self.range_box = ttk.Combobox(body, textvariable=self.range_mm,
+                                      values=["Tümü", "1500", "2000", "2500", "3000"], width=30)
+        self.range_box.pack()
+        self.continuous = tk.BooleanVar(value=game_port is not None)
+        self.continuous_box = ttk.Checkbutton(body, text="Sürekli oyun — yalnız Durdur ile biter",
+                                             variable=self.continuous)
+        self.continuous_box.pack()
+        self.session_continuous = False
+        self.demo_game = tk.BooleanVar(value=demo_game)
+        self.demo_box = ttk.Checkbutton(body, text="DEMO · Kolay hareket tetikleme (oturmak da tetikleyebilir)",
+                                       variable=self.demo_game)
+        self.demo_box.pack()
         self.instruction = ttk.Label(body, text="Radarı sabitle. Anten yüzü sana baksın; karşısında tek kişi olsun.", wraplength=650, justify="center")
         self.instruction.pack(pady=10)
         self.telemetry = ttk.Label(body, text=f"{port} · Başlatılmadı", wraplength=650)
@@ -87,9 +101,15 @@ class RadarWindow:
     def start(self):
         # Önceki denemenin sayısını ve hata bilgisini yeni denemeye taşıma.
         self.recorder = None
-        self.counter = ExperimentalCounter(CounterSettings())
         self.reported_error = None
         try:
+            text = self.range_mm.get().strip()
+            maximum = None if text in ("", "Tümü") else float(text)
+            settings = (CounterSettings.for_demo(maximum) if self.demo_game.get()
+                        else CounterSettings(max_distance_mm=maximum))
+            self.counter = ExperimentalCounter(settings)
+            self.session_continuous = self.continuous.get()
+            session_duration = None if self.session_continuous else self.duration
             import serial
             # timeout=0 okumayı bekletmez; pencerenin düğmeleri ve saati çalışır.
             # Baud ve 8N1 ayarları radarın veri çıkışıyla eşleşmelidir.
@@ -103,7 +123,7 @@ class RadarWindow:
             # Seçim, kaydın hangi deney türüne ait olduğunu belirtir.
             label, instruction = EXPERIMENTS[self.mode.get()]
             self.recorder = TrialRecorder(self.output, label, self.counter.settings,
-                                          self.port, self.baud, self.duration)
+                                          self.port, self.baud, session_duration)
             if self.game_port is not None:
                 from game_bridge import GameEventPublisher
                 self.game_publisher = GameEventPublisher("radar", port=self.game_port)
@@ -114,7 +134,7 @@ class RadarWindow:
                 }
                 self.game_status.config(text=f"Oyun: 127.0.0.1:{self.game_port} · deneysel radar girdisi")
             self.started_at = time.monotonic()
-            self.clock = TrialClock(duration=self.duration)
+            self.clock = TrialClock(duration=session_duration)
             self.clock.start(self.started_at)
             self.last_frame = None
             self.reported_error = None
@@ -126,6 +146,9 @@ class RadarWindow:
             # değiştirilmesini engelle; Durdur düğmesi kullanılabilir kalsın.
             self.start_button.config(state="disabled")
             self.mode_box.config(state="disabled")
+            self.range_box.config(state="disabled")
+            self.continuous_box.config(state="disabled")
+            self.demo_box.config(state="disabled")
             self.stop_button.config(state="normal")
             self.save_button.config(state="disabled")
             self.saved.config(text="Ham veri, ölçümler ve sayaç olayları kaydediliyor.")
@@ -141,12 +164,11 @@ class RadarWindow:
         self.after_id = None
         try:
             now = time.monotonic()
-            # Veri kesilirse eski hedefi kullanma. Deney saati yeni paket gelmesini
-            # beklemediğinden bağlantı koptuğunda da süre sonunda durabiliriz.
-            if self.last_frame is None or now - self.last_frame > 0.4:
-                self.counter.update(now - self.started_at, [])
+            # Eski referansla denemeyi başlatma. Veri yok bilgisini ancak seri
+            # tamponu okuduktan sonra ver ki ilk geçerli kareyle aynı zamana yazılmasın.
+            fresh_frame = self.last_frame is not None and now - self.last_frame <= 0.4
             previous_phase = self.clock.phase
-            phase = self.clock.advance(now, self.counter.ready)
+            phase = self.clock.advance(now, fresh_frame and self.counter.ready)
             if phase in ("done", "no_baseline"):
                 self.finish(phase)
                 return
@@ -189,9 +211,11 @@ class RadarWindow:
                 if not getattr(self, "active_announced", False):
                     self.beep()
                     self.active_announced = True
-                self.banner.config(text="BAŞLA — Deneme sürüyor", fg="#06703d")
-                self.timer.config(text=f"Kalan süre: {math.ceil(self.clock.remaining(now))} sn")
-                self.instruction.config(text=EXPERIMENTS[self.mode.get()][1])
+                self.banner.config(text="DEMO AÇIK — Hareket oyunu tetikler" if self.counter.settings.demo_mode else "BAŞLA — Deneme sürüyor", fg="#06703d")
+                self.timer.config(text="Sürekli oyun açık · Durdur ile biter" if getattr(self, "session_continuous", False)
+                                  else f"Kalan süre: {math.ceil(self.clock.remaining(now))} sn")
+                self.instruction.config(text="Oyun modunda istediğin zaman hareket et.\nTakip kesilirse sabit durarak yeniden kalibrasyonu bekle."
+                                        if getattr(self, "session_continuous", False) else EXPERIMENTS[self.mode.get()][1])
             self.status.config(text=f"{self.counter.status} · Y, dikey zıplama yüksekliği değildir.")
             self.after_id = self.root.after(30, self.poll)
         except (OSError, ValueError) as exc:
@@ -217,6 +241,10 @@ class RadarWindow:
                 self.recorder.summary["game_bridge"]["close_error"] = str(close_error)
             return None
         self.recorder.summary["game_bridge"]["events_sent"] += 1
+        # Sayaç artıp oyun tepki vermediğinde gönderim aşaması hemen görülebilsin.
+        # Bu yalnız send başarısıdır; Unity'den alındı onayı gelmez.
+        sent = self.recorder.summary["game_bridge"]["events_sent"]
+        self.game_status.config(text=f"Oyun: 127.0.0.1:{self.game_port} · Gönderilen: {sent} · UDP, alıcı onayı yok")
         return event
 
     def finish(self, reason):
@@ -277,6 +305,9 @@ class RadarWindow:
         self.count_label.config(text=str(self.counter.count))
         self.start_button.config(state="normal")
         self.mode_box.config(state="readonly")
+        self.range_box.config(state="normal")
+        self.continuous_box.config(state="normal")
+        self.demo_box.config(state="normal")
         self.stop_button.config(state="disabled")
         self.beep()
 
@@ -301,9 +332,9 @@ class RadarWindow:
             self.root.destroy()
 
 
-def main(port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None):
+def main(port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None, max_distance_mm=None, demo_game=False):
     # mainloop pencere olaylarını işler; RadarWindow yalnızca radar kullanır.
     root = tk.Tk()
-    RadarWindow(root, port, baud, duration, output, game_port=game_port)
+    RadarWindow(root, port, baud, duration, output, game_port=game_port, max_distance_mm=max_distance_mm, demo_game=demo_game)
     root.mainloop()
     return 0
