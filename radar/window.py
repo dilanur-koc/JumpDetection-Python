@@ -22,6 +22,8 @@ EXPERIMENTS = {
     "Sabit duruş": ("standing", "Deneme boyunca hareketsiz dur."),
 }
 
+DEFAULT_DEMO_RANGE_MM = 1800
+
 
 class RadarWindow:
     def __init__(self, root, port="COM5", baud=256000, duration=20, output=Path("recordings/radar"), game_port=None, max_distance_mm=None, demo_game=False):
@@ -58,10 +60,12 @@ class RadarWindow:
         self.mode = tk.StringVar(value="Normal zıplama")
         self.mode_box = ttk.Combobox(body, textvariable=self.mode, values=list(EXPERIMENTS), state="readonly", width=30)
         self.mode_box.pack()
-        ttk.Label(body, text="Oyun alanı yarıçapı (mm) · boş/Tümü: sınır yok").pack(pady=(8, 0))
+        ttk.Label(body, text="Oyun alanı (mm) · örnek: 800-2500 · boş/Tümü: sınır yok").pack(pady=(8, 0))
+        if max_distance_mm is None and demo_game:
+            max_distance_mm = DEFAULT_DEMO_RANGE_MM
         self.range_mm = tk.StringVar(value="Tümü" if max_distance_mm is None else f"{max_distance_mm:g}")
         self.range_box = ttk.Combobox(body, textvariable=self.range_mm,
-                                      values=["Tümü", "1500", "2000", "2500", "3000"], width=30)
+                                      values=["Tümü", "800-2500", "1200", "1500", "1800", "2000", "2500", "3000"], width=30)
         self.range_box.pack()
         self.continuous = tk.BooleanVar(value=game_port is not None)
         self.continuous_box = ttk.Checkbutton(body, text="Sürekli oyun — yalnız Durdur ile biter",
@@ -104,9 +108,13 @@ class RadarWindow:
         self.reported_error = None
         try:
             text = self.range_mm.get().strip()
-            maximum = None if text in ("", "Tümü") else float(text)
-            settings = (CounterSettings.for_demo(maximum) if self.demo_game.get()
-                        else CounterSettings(max_distance_mm=maximum))
+            minimum, maximum = 0.0, None
+            if text not in ("", "Tümü"):
+                lower, separator, upper = text.partition("-")
+                minimum = float(lower) if separator else 0.0
+                maximum = float(upper if separator else lower)
+            settings = (CounterSettings.for_demo(maximum, min_distance_mm=minimum) if self.demo_game.get()
+                        else CounterSettings(max_distance_mm=maximum, min_distance_mm=minimum))
             self.counter = ExperimentalCounter(settings)
             self.session_continuous = self.continuous.get()
             session_duration = None if self.session_continuous else self.duration
@@ -134,7 +142,10 @@ class RadarWindow:
                 }
                 self.game_status.config(text=f"Oyun: 127.0.0.1:{self.game_port} · deneysel radar girdisi")
             self.started_at = time.monotonic()
-            self.clock = TrialClock(duration=session_duration)
+            if self.session_continuous and settings.demo_mode:
+                self.clock = TrialClock(duration=None, preparation_limit=None)
+            else:
+                self.clock = TrialClock(duration=session_duration)
             self.clock.start(self.started_at)
             self.last_frame = None
             self.reported_error = None
@@ -196,8 +207,22 @@ class RadarWindow:
                             details["game_event"] = game_event
                         self.recorder.event(record, self.counter.count, details)
                     self.recorder.frame(record, targets, self.counter.count if phase == "active" else 0, self.counter.status)
-                    active = [f"#{t.slot}: X {t.x_mm} mm · Y {t.y_mm} mm · hız {t.speed_cm_s} cm/sn" for t in targets if t.present]
-                    self.telemetry.config(text=" | ".join(active) or "Hedef yok")
+                    readings = []
+                    minimum = self.counter.settings.min_distance_mm
+                    maximum = self.counter.settings.max_distance_mm
+                    for target in targets:
+                        if not target.present:
+                            continue
+                        distance = math.hypot(target.x_mm, target.y_mm)
+                        outside = " (alan dışında)" if distance < minimum or (maximum is not None and distance > maximum) else ""
+                        readings.append(f"#{target.slot}: {distance:.0f} mm{outside} · X {target.x_mm} · Y {target.y_mm} · {target.speed_cm_s} cm/sn")
+                    if minimum and maximum is not None:
+                        limit = f"Alan: {minimum:g}-{maximum:g} mm · "
+                    elif minimum:
+                        limit = f"Alan: {minimum:g} mm ve üzeri · "
+                    else:
+                        limit = f"Alan: {maximum:g} mm · " if maximum is not None else ""
+                    self.telemetry.config(text=limit + (" | ".join(readings) or "Hedef yok"))
             if self.last_frame is None or now - self.last_frame > 0.4:
                 self.counter.update(now - self.started_at, [])
                 self.telemetry.config(text="Veri yok / paketler kesildi")
@@ -206,12 +231,27 @@ class RadarWindow:
             if phase == "prepare":
                 remaining = math.ceil(self.clock.remaining(now))
                 self.banner.config(text="SABİT DUR — Hazırlanıyor", fg="#996000")
-                self.timer.config(text=f"Başlamadan önce: {remaining} sn" if remaining else "Tek, sabit hedef bekleniyor…")
+                if remaining:
+                    hint = f"Başlamadan önce: {remaining} sn"
+                elif self.last_frame is None or now - self.last_frame > 0.4:
+                    hint = "Radar paketi bekleniyor — COM bağlantısını kontrol et"
+                else:
+                    hint = {
+                        "Hedef yok": "Radar seni görmüyor — antenin önünde dur",
+                        "Oyun alaninda hedef yok": "Hedef alan dışında — mesafe aralığını kontrol et",
+                        "Birden fazla hedef": "Birden fazla hedef var — alan içinde tek kişi kalsın",
+                    }.get(self.counter.status, "Tek, sabit hedef bekleniyor…")
+                self.timer.config(text=hint)
             else:
                 if not getattr(self, "active_announced", False):
                     self.beep()
                     self.active_announced = True
-                self.banner.config(text="DEMO AÇIK — Hareket oyunu tetikler" if self.counter.settings.demo_mode else "BAŞLA — Deneme sürüyor", fg="#06703d")
+                if self.counter.settings.demo_mode:
+                    ready = self.counter.ready
+                    self.banner.config(text="DEMO HAZIR — Hareket bekleniyor" if ready else "DEMO BEKLİYOR — Sabit dur",
+                                       fg="#06703d" if ready else "#996000")
+                else:
+                    self.banner.config(text="BAŞLA — Deneme sürüyor", fg="#06703d")
                 self.timer.config(text="Sürekli oyun açık · Durdur ile biter" if getattr(self, "session_continuous", False)
                                   else f"Kalan süre: {math.ceil(self.clock.remaining(now))} sn")
                 self.instruction.config(text="Oyun modunda istediğin zaman hareket et.\nTakip kesilirse sabit durarak yeniden kalibrasyonu bekle."
@@ -294,13 +334,18 @@ class RadarWindow:
         titles = {"done": "BİTTİ — DUR", "stopped": "DURDURULDU", "no_baseline": "BAŞLAMADI — Sabit hedef bulunamadı", "error": "DENEME BAŞARISIZ"}
         self.banner.config(text=titles.get(reason, "DURDURULDU"), fg="#a52020")
         self.timer.config(text="Sayım durdu. Sonuç aşağıda sabit kalır.")
-        if self.recorder is not None:
+        if reason == "no_baseline":
+            self.status.config(text=f"Son radar durumu: {self.counter.status}")
+        elif self.recorder is not None:
             frames = self.recorder.summary["active_frames"]
             tracked = self.recorder.summary["single_target_active_frames"]
             self.status.config(text=f"Tek hedef görülen ölçüm: {tracked}/{frames}. Yalnızca aday sayımıdır.")
         if cleanup_errors:
             self.status.config(text=" | ".join(cleanup_errors))
-        self.instruction.config(text="Artık zıplama. Gerçek zıplama sayını yazıp Sonucu kaydet düğmesine bas.")
+        if reason == "no_baseline":
+            self.instruction.config(text="Alan içinde tek kişi olsun. Üstteki mesafeye göre oyun alanını ayarla ve Başlat'a bas.")
+        else:
+            self.instruction.config(text="Artık zıplama. Gerçek zıplama sayını yazıp Sonucu kaydet düğmesine bas.")
         # Sonuç penceresi açık kalır ama yeni okumalar planlanmadığı için sayı donar.
         self.count_label.config(text=str(self.counter.count))
         self.start_button.config(state="normal")

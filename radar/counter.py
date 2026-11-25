@@ -11,7 +11,7 @@ from statistics import median
 
 
 # Kayıtlar, eski ve yeni kurallarla alınan sonuçları ayırt edebilsin.
-COUNTER_VERSION = "burst-quiet-v5-demo"
+COUNTER_VERSION = "burst-quiet-v6-demo-confirmation"
 
 
 @dataclass(frozen=True)
@@ -46,10 +46,12 @@ class CounterSettings:
     max_distance_mm: float | None = None
     # Yalnız açıkça seçilen sunum modu: doğrulanmış zıplama sınıflandırıcısı değildir.
     demo_mode: bool = False
+    min_distance_mm: float = 0.0
 
     @classmethod
-    def for_demo(cls, max_distance_mm=None):
+    def for_demo(cls, max_distance_mm=None, *, min_distance_mm=0.0):
         return cls(demo_mode=True, max_distance_mm=max_distance_mm,
+                   min_distance_mm=min_distance_mm,
                    displacement_mm=15.0, cooldown_seconds=0.8)
 
     def __post_init__(self):
@@ -58,6 +60,10 @@ class CounterSettings:
         if self.max_distance_mm is not None and (
                 not isfinite(self.max_distance_mm) or self.max_distance_mm <= 0):
             raise ValueError("max_distance_mm pozitif ve sonlu olmali")
+        if not isfinite(self.min_distance_mm) or self.min_distance_mm < 0:
+            raise ValueError("En yakin mesafe sifir veya pozitif olmali")
+        if self.max_distance_mm is not None and self.min_distance_mm >= self.max_distance_mm:
+            raise ValueError("En yakin mesafe en uzak mesafeden kucuk olmali")
         # Ayarlar oluşturulurken anlamsız değerleri reddet; hatayı deneyde bekletme.
         for name in (
             "motion_speed_cm_s", "quiet_seconds", "displacement_mm",
@@ -183,14 +189,16 @@ class ExperimentalCounter:
                 self._invalidate("Veri araligi; yeniden kalibrasyon")
         self._last_time = now
         active = [target for target in targets if target.present]
-        if self.settings.max_distance_mm is not None:
+        minimum, maximum = self.settings.min_distance_mm, self.settings.max_distance_mm
+        if minimum or maximum is not None:
             # Önce ham ölçümleri doğrula; bozuk bir hedefi alan dışında diye gizleme.
             if any(not all(isfinite(v) for v in (t.x_mm, t.y_mm, t.speed_cm_s))
                    for t in active):
                 self._invalidate("Gecersiz hedef verisi")
                 return False
             had_targets = bool(active)
-            active = [t for t in active if hypot(t.x_mm, t.y_mm) <= self.settings.max_distance_mm]
+            upper = float("inf") if maximum is None else maximum
+            active = [t for t in active if minimum <= hypot(t.x_mm, t.y_mm) <= upper]
             if had_targets and not active:
                 self._invalidate("Oyun alaninda hedef yok")
                 return False
@@ -251,11 +259,14 @@ class ExperimentalCounter:
         if self.settings.demo_mode and self._mode == "ready":
             displacement = self._distance(point, self._baseline)
             self.status = "DEMO hazir: hareket bekleniyor"
-            if (speed < self.settings.motion_speed_cm_s
+            if speed < self.settings.motion_speed_cm_s:
+                self._motion_streak = 0
+                return False
+            self._motion_streak += 1
+            if (self._motion_streak < self.settings.motion_samples
                     or displacement < self.settings.displacement_mm):
                 return False
-            # Gerçek radar verisi tetikler; iki ardışık hız ve hareket sonu beklenmez.
-            # Tek örnek daha duyarlıdır, oturmak/yürümek de olay oluşturabilir.
+            # Tek ölçümlük hız sıçramasını reddet ve hareketin bitmesini bekleme.
             self.count += 1
             self._last_count_time = now
             self.last_event = {"started_at_s": now, "ended_at_s": now,
@@ -263,6 +274,7 @@ class ExperimentalCounter:
                                "demo_mode": True, "trigger": "radar_motion_onset"}
             self.ready = False
             self._mode = "cooldown"
+            self._motion_streak = 0
             self._quiet_points = []
             self.status = "DEMO hareketi gonderildi; yeniden kurma icin kisa durulma"
             return True

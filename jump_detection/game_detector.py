@@ -45,6 +45,8 @@ class BodySample:
 
 @dataclass(frozen=True)
 class UpperBodySample:
+    # Laptop kamerasında ayaklar görünmeyebilir. Baş ve iki omuzdan bir örnek üretiriz.
+    # scale fiziksel metre değil, görüntüdeki omuz açıklığından türetilen bir ölçektir.
     nose: float
     left_shoulder: float
     right_shoulder: float
@@ -59,7 +61,7 @@ class UpperBodySample:
         if not landmarks_visible(points, (0, 11, 12)):
             return None
         nose, left, right = points[0], points[11], points[12]
-        # Convert shoulder width to the same image-height units as vertical motion.
+        # Yatay omuz açıklığını dikey hareketle aynı görüntü-yüksekliği birimine çevir.
         scale = hypot((left.x - right.x) * aspect, left.y - right.y)
         if scale < 0.06 or nose.y >= min(left.y, right.y):
             return None
@@ -76,6 +78,8 @@ class CameraGameDetector:
         self._clear_tracking()
 
     def _clear_tracking(self):
+        # Referans ve hareket geçmişini siler; toplam sayımı korur.
+        # Böylece mesafe değişince yeniden kalibrasyon, eski sayımı kaybettirmez.
         self._samples = []
         self._baseline = None
         self._previous = None
@@ -85,6 +89,8 @@ class CameraGameDetector:
         self.status = self.framing_hint
 
     def update(self, now, sample):
+        # Bu metot kamera örneğinden yalnız bir olay kararı üretir; Unity'ye kendisi bağlanmaz.
+        # now monotonik saniyedir. Eksik/eski görüntüyle hız tahmini yapılmaz.
         if self._last_seen is not None:
             gap = now - self._last_seen
             if gap <= 0:
@@ -92,8 +98,7 @@ class CameraGameDetector:
             if gap > 0.25:
                 self._clear_tracking()
         if sample is None:
-            # A single occluded frame breaks velocity and landing history.
-            # A longer loss also discards the standing reference.
+            # Tek eksik kare hız ve iniş geçmişini keser; uzun kayıp referansı da siler.
             self._previous = None
             self._landed_since = None
             self._samples.clear()
@@ -108,15 +113,20 @@ class CameraGameDetector:
 
         baseline_positions, baseline_scale = self._baseline
         if self.upper_body and abs(sample.scale / baseline_scale - 1) > 0.20:
-            self._previous = None
-            self._landed_since = None
-            self.status = "RETURN TO STARTING DISTANCE OR PRESS R"
+            # Omuz genişliği %20'den fazla değişirse yeni mesafede sabit duruş referansı al.
+            # Kalibrasyon sırasında olay üretilmez; önceki referansla yanlış kıyas yapılmaz.
+            self._clear_tracking()
+            self._previous = (now, sample)
+            self._last_seen = now
+            self._calibrate(now, sample)
             return False
         primary_rise, left_rise, right_rise = (
             (base - current) / baseline_scale
             for base, current in zip(baseline_positions, sample.positions)
         )
 
+        # Aynı yükselişi her görüntü karesinde yeniden sayma. Referansa dönüş ve
+        # kısa sabit duruş görülmeden bir sonraki olayı kabul etme.
         if self._last_jump is not None:
             if max(abs(left_rise), abs(right_rise), abs(primary_rise)) < 0.15:
                 if self._landed_since is None:
@@ -134,7 +144,8 @@ class CameraGameDetector:
         previous_time, previous_sample = previous
         speed = (previous_sample.positions[0] - sample.positions[0]) / (baseline_scale * (now - previous_time))
         rises = primary_rise, left_rise, right_rise
-        # A nod or shrug can move one point independently. Look for coherent rise.
+        # Görüntüde Y aşağı büyür; önceki Y - yeni Y pozitifse yukarı hareket vardır.
+        # Baş sallamak/tek omzu kaldırmak yerine üç noktanın tutarlı yükselişini ara.
         coherent = not self.upper_body or max(rises) - min(rises) <= 0.14
         if coherent and primary_rise >= 0.16 and min(left_rise, right_rise) >= 0.12 and speed >= 0.45:
             self.count += 1
@@ -146,6 +157,8 @@ class CameraGameDetector:
         return False
 
     def _calibrate(self, now, sample):
+        # En az 8 örnek ve 1 saniyelik kararlı duruş gerekir. Medyan, tek karedeki
+        # küçük sapmaların referansı bozmasını azaltır. Bu bir hareket referansıdır.
         self.status = ("CALIBRATING - STAND STILL" if self.upper_body
                        else "CALIBRATING - STAND STILL, FEET IN VIEW")
         if isinstance(sample, BodySample) and not sample.standing:

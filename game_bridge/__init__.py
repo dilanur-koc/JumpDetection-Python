@@ -44,6 +44,8 @@ class GameEventPublisher:
         self._closed = False
 
     def send_jump(self):
+        # Kamera/radar/benzetim aynı sözleşmeyi kullanır. source alanı sayesinde
+        # Unity yalnız menüden seçilmiş kaynağın olaylarını işleme alabilir.
         if self._closed:
             raise OSError("Olay yayincisi kapali")
         if self.sequence >= MAX_INT64:

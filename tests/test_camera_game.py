@@ -92,3 +92,30 @@ class UpperBodyGameTests(unittest.TestCase):
                 detector = self.calibrated()
                 self.assertFalse(detector.update(1.20, sample))
                 self.assertEqual(detector.count, 0)
+
+    def test_new_distance_recalibrates_and_allows_a_second_jump(self):
+        detector = self.calibrated()
+        self.assertTrue(detector.update(1.20, self.sample(0.25, 0.37, 0.37)))
+        closer = self.sample(width=0.36)
+        self.assertFalse(detector.update(1.28, closer))
+        self.assertIn("CALIBRATING", detector.status)
+        for index in range(1, 16):
+            self.assertFalse(detector.update(1.28 + index * 0.08, closer))
+        self.assertEqual(detector.status, "READY - JUMP")
+        self.assertTrue(detector.update(2.56, self.sample(0.21, 0.33, 0.33, width=0.36)))
+        self.assertEqual(detector.count, 2)
+
+    def test_same_relative_rise_at_different_camera_scales(self):
+        for width in (0.12, 0.24, 0.36):
+            with self.subTest(width=width):
+                detector = CameraGameDetector(upper_body=True)
+                neutral = self.sample(width=width)
+                for index in range(15):
+                    self.assertFalse(detector.update(index * 0.08, neutral))
+                rise = 0.25 * neutral.scale
+                self.assertTrue(detector.update(1.20, self.sample(
+                    nose=neutral.nose-rise,
+                    left=neutral.left_shoulder-rise,
+                    right=neutral.right_shoulder-rise,
+                    width=width)))
+                self.assertEqual(detector.count, 1)

@@ -22,11 +22,12 @@ class DemoTests(unittest.TestCase):
         self.assertTrue(c.ready)
         return c
 
-    def test_demo_uses_real_motion_onset_without_waiting_for_second_speed_sample(self):
+    def test_demo_confirms_movement_without_waiting_for_it_to_end(self):
         normal = self.calibrated(False)
         demo = self.calibrated()
         self.assertFalse(normal.update(1.2, [target(40, 16)]))
-        self.assertTrue(demo.update(1.2, [target(40, 16)]))
+        self.assertFalse(demo.update(1.2, [target(40, 16)]))
+        self.assertTrue(demo.update(1.3, [target(50, 16)]))
         self.assertTrue(demo.last_event["demo_mode"])
         self.assertEqual(demo.last_event["trigger"], "radar_motion_onset")
         self.assertEqual(demo.count, 1)
@@ -36,18 +37,30 @@ class DemoTests(unittest.TestCase):
             with self.subTest(x=x, speed=speed):
                 c = self.calibrated()
                 self.assertFalse(c.update(1.2, [target(x, speed)]))
+                self.assertFalse(c.update(1.3, [target(x, speed)]))
                 self.assertEqual(c.count, 0)
+
+    def test_isolated_speed_spikes_cannot_trigger_demo(self):
+        c = self.calibrated()
+        self.assertFalse(c.update(1.2, [target(90, 39)]))
+        self.assertFalse(c.update(1.2, [target(90, 39)]))
+        self.assertFalse(c.update(1.3, [target(90, 8)]))
+        self.assertFalse(c.update(1.4, [target(95, 24)]))
+        self.assertEqual(c.count, 0)
+        self.assertTrue(c.update(1.5, [target(95, 24)]))
 
     def test_demo_requires_quiet_and_cooldown_before_rearming(self):
         c = self.calibrated()
-        self.assertTrue(c.update(1.2, [target(40, 16)]))
-        for i in range(13, 26):
+        self.assertFalse(c.update(1.2, [target(40, 16)]))
+        self.assertTrue(c.update(1.3, [target(50, 16)]))
+        for i in range(14, 26):
             self.assertFalse(c.update(i / 10, [target(60, 16)]))
         self.assertEqual(c.count, 1)
         c.update(2.6, [target(60, 0)])
         c.update(2.72, [target(60, 0)])
         self.assertTrue(c.ready)
-        self.assertTrue(c.update(2.8, [target(100, 16)]))
+        self.assertFalse(c.update(2.8, [target(100, 16)]))
+        self.assertTrue(c.update(2.9, [target(105, 16)]))
         self.assertEqual(c.count, 2)
 
     def test_demo_still_rejects_missing_multiple_stale_and_teleporting_targets(self):
@@ -60,6 +73,17 @@ class DemoTests(unittest.TestCase):
                 self.assertFalse(c.update(time, targets))
                 self.assertEqual(c.count, 0)
                 self.assertFalse(c.ready)
+
+    def test_range_rejects_near_target_but_still_requires_one_player(self):
+        c = ExperimentalCounter(CounterSettings.for_demo(2500, min_distance_mm=800))
+        near = Target(2, True, 0, 250, 32, 320)
+        for i in range(12):
+            self.assertFalse(c.update(i / 10, [target(), near]))
+        self.assertTrue(c.ready)
+        self.assertFalse(c.update(1.2, [target(40, 16), near]))
+        self.assertTrue(c.update(1.3, [target(50, 16), near]))
+        self.assertFalse(c.update(1.4, [target(50, 16), target(300, 16, slot=2)]))
+        self.assertEqual(c.status, "Birden fazla hedef")
 
     def test_demo_is_explicit_in_cli_and_recording(self):
         with patch("radar.window.main", return_value=0) as launch:
@@ -76,5 +100,6 @@ class DemoTests(unittest.TestCase):
 
     def test_sitting_like_motion_also_triggers_documented_demo_limitation(self):
         c = self.calibrated()
-        self.assertTrue(c.update(1.2, [target(100, 24)]))
+        self.assertFalse(c.update(1.2, [target(100, 24)]))
+        self.assertTrue(c.update(1.3, [target(105, 24)]))
         self.assertEqual(c.count, 1)

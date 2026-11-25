@@ -77,7 +77,7 @@ def main(argv=None):
     parser.add_argument("--counter-window", action="store_true", help="Deneysel aday sayaci ve sureli deney penceresi")
     parser.add_argument("--game-events", action="store_true", help="Aktif deneydeki adaylari yerel Unity prototipine gonder")
     parser.add_argument("--game-port", type=udp_port, default=5065, help="Yerel oyun UDP portu (varsayilan: 5065)")
-    parser.add_argument("--max-distance-mm", type=positive, help="Sayac icin oyun alani yaricapi; varsayilan sinirsiz")
+    parser.add_argument("--max-distance-mm", type=positive, help="Oyun alani yaricapi; demosuz varsayilan sinirsiz")
     parser.add_argument("--demo-game", action="store_true", help="Acikca secilen kolay radar hareket tetikleme; ziplama siniflandiricisi degildir")
     args = parser.parse_args(argv)
     if args.demo_game and not (args.counter_window and args.game_events):

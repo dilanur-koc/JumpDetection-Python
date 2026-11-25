@@ -1,6 +1,8 @@
 """Pencere kontrolunu ekran veya seri cihaz acmadan dogrula."""
 
+import sys
 import unittest
+from types import ModuleType
 from unittest.mock import Mock, patch
 
 try:
@@ -8,7 +10,7 @@ try:
 except ImportError:
     RadarWindow = None  # Tk is optional on headless CI systems.
 
-from radar.counter import ExperimentalCounter
+from radar.counter import CounterSettings, ExperimentalCounter
 from radar.protocol import FrameParser, decode_frame
 from radar.trial import TrialClock
 
@@ -54,7 +56,10 @@ class WindowControllerTests(unittest.TestCase):
                 window.output = "unused-output"
                 window.actual = Mock()
                 window.poll = Mock()
-                with patch("serial.Serial"), patch("radar.window.TrialRecorder") as recorder:
+                # Bu kontrol port açmaz; CI'da pyserial kurulu olmasını gerektirmez.
+                serial_stub = ModuleType("serial")
+                serial_stub.Serial = Mock()
+                with patch.dict(sys.modules, {"serial": serial_stub}), patch("radar.window.TrialRecorder") as recorder:
                     window.start()
                 self.assertIsNone(window.reported_error)
                 self.assertEqual(window.counter.settings.demo_mode, demo)
@@ -157,7 +162,7 @@ class WindowControllerTests(unittest.TestCase):
         window.connection.read.return_value = bytes.fromhex(
             "AA FF 03 00 0E 03 B1 86 10 00 40 01" + " 00" * 16 + " 55 CC")
         window.counter = Mock(ready=True, count=1, status="Aday sayildi", last_event={"peak_speed_cm_s": 24})
-        window.counter.settings.demo_mode = False
+        window.counter.settings = CounterSettings()
         window.counter.update.return_value = True
         window.game_publisher = Mock()
         window.game_publisher.send_jump.return_value = {"source": "radar", "sequence": 1}
@@ -174,6 +179,16 @@ class WindowControllerTests(unittest.TestCase):
         details = window.recorder.event.call_args.args[2]
         self.assertEqual(details["game_event"]["source"], "radar")
         self.assertEqual(details["peak_speed_cm_s"], 24)
+
+    def test_out_of_range_target_is_distinguished_from_missing_target(self):
+        window = self.game_window("active")
+        window.counter = ExperimentalCounter(CounterSettings.for_demo(1500))
+        with patch("radar.window.time.monotonic", return_value=106):
+            window.poll()
+        window.game_publisher.send_jump.assert_not_called()
+        message = window.telemetry.config.call_args.kwargs["text"]
+        self.assertIn("Alan: 1500 mm", message)
+        self.assertIn("(alan dışında)", message)
 
     def test_preparation_or_non_candidate_does_not_send_game_input(self):
         for phase, detected in (("prepare", True), ("active", False)):

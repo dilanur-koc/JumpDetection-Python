@@ -24,7 +24,7 @@ public class JumpPrototype : MonoBehaviour
     [SerializeField, InspectorName("Otomatik ilerleme")] private bool autoRun = true;
     [Header("Hareket ayarları")]
     // Dünya birimi/saniye. Radar denemesinde tepki vermek için daha rahat ilerleme.
-    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 2.8f;
+    [SerializeField, Min(0), InspectorName("İlerleme hızı")] private float moveSpeed = 3.25f;
     // Dünya birimi/saniye cinsinden ilk yukarı hız. Bu değer doğrudan yükseklik değildir.
     // Yaklaşık yükselme miktarı = jumpSpeed² / (2 * yerçekimi ivmesinin büyüklüğü).
     [Tooltip("İlk dikey hız. Artırınca kare daha yükseğe zıplar.")]
@@ -37,18 +37,18 @@ public class JumpPrototype : MonoBehaviour
     [InspectorName("Kare kenar ışığı")]
     [SerializeField] private Color squareNeon = new Color(0.12f, 0.95f, 0.9f);
     [InspectorName("Kare iç dolgusu")]
-    [SerializeField] private Color squareBody = new Color(0.38f, 0.48f, 0.52f);
+    [SerializeField] private Color squareBody = new Color(0.16f, 0.52f, 0.62f);
     // Zemin dolgusu ve kamera arka planı aynı renk değişkenini kullanır.
     [InspectorName("Arka plan ve zemin")]
-    [SerializeField] private Color backgroundColor = new Color(0.035f, 0.025f, 0.09f);
+    [SerializeField] private Color backgroundColor = new Color(0.055f, 0.07f, 0.16f);
     [InspectorName("Engeller")]
     [SerializeField] private Color obstacleColor = new Color(1, 0.24f, 0.47f);
     [InspectorName("Bitiş çizgisi")]
     [SerializeField] private Color finishColor = new Color(0.65f, 1, 0.3f);
     [Header("Zemin ışığı")]
     [SerializeField, Range(3, 14), InspectorName("Zemin ışığının genişliği")] private float spotlightRadius = 7.5f;
-    [SerializeField, Range(0, 0.25f), InspectorName("Uzak zeminin görünürlüğü")] private float distantVisibility = 0.025f;
-    [SerializeField, Range(0, 0.2f), InspectorName("Karenin parıltısı")] private float squareGlow = 0.025f;
+    [SerializeField, Range(0, 0.5f), InspectorName("Uzak zeminin görünürlüğü")] private float distantVisibility = 0.25f;
+    [SerializeField, Range(0, 0.2f), InspectorName("Karenin parıltısı")] private float squareGlow = 0.08f;
     // Seçilen kaynak yalnız zıplama isteğinin nereden geleceğini belirler.
     private enum InputSource { Keyboard, Simulator, Radar, Camera }
     private InputSource source = InputSource.Keyboard;
@@ -56,8 +56,15 @@ public class JumpPrototype : MonoBehaviour
     // Rigidbody2D hız ve yerçekimini, Collider2D yüzey temaslarını yönetir.
     private Rigidbody2D player;
     private Collider2D floor, playerCollider;
+    private readonly List<Collider2D> walkableSurfaces = new List<Collider2D>();
+    private readonly List<Collider2D> platforms = new List<Collider2D>();
     private readonly List<Collider2D> obstacles = new List<Collider2D>();
-    private const float FinishX = 34; // Karenin bu X konumuna ulaşması bölümü bitirir.
+    private NeonStage stage;
+    private const float FinishX = 46; // Karenin bu X konumuna ulaşması bölümü bitirir.
+    private const float CameraAirSpeedMultiplier = 1.2f;
+    // Sunumda hareketi anlatırken: moveSpeed yatay HIZ, jumpSpeed ilk dikey HIZ'dır.
+    // Dikey İVME Unity yerçekimi * gravityScale'dir: -9.81 * 2.5 ≈ -24.53 birim/s².
+    // Yatay hızlanma eğrisi yoktur; FixedUpdate her adımda hedef yatay hızı atar.
     private Camera gameCamera;
     private int worldCullingMask;
     private PrototypeCharacter character;
@@ -139,22 +146,21 @@ public class JumpPrototype : MonoBehaviour
         camera.transform.position = new Vector3(-6, 0, -10);
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = backgroundColor;
-        floor = Box("Zemin", new Vector2(15, -2.25f), new Vector2(54, 0.5f),
+        floor = Box("Zemin", new Vector2(21, -2.25f), new Vector2(66, 0.5f),
             backgroundColor, true).GetComponent<Collider2D>();
         // Fizik yüzeyi aynı yerde kalır. Görünümü ayrı, hacimli platform panelleri çizer.
         floor.GetComponent<SpriteRenderer>().enabled = false;
+        walkableSurfaces.Add(floor);
         CreateStageSurface();
-        // Engel merkezleri 7 birim aralıklı: 2.8 hızda aralarında 2.5 saniye var.
-        float[] obstaclePositions = { 11, 18, 25, 32 };
-        foreach (float x in obstaclePositions)
-        {
-            GameObject block = Box("Engel", new Vector2(x, -1.6f), new Vector2(0.8f, 0.8f), Color.Lerp(backgroundColor, obstacleColor, 0.3f), true);
-            obstacles.Add(block.GetComponent<Collider2D>());
-            Box("Engel isigi", new Vector2(x, -1.225f), new Vector2(0.8f, 0.05f), Color.Lerp(obstacleColor, Color.white, 0.6f), false);
-            Box("Engel yan kenari", new Vector2(x - 0.385f, -1.6f), new Vector2(0.03f, 0.8f), obstacleColor, false);
-        }
-        Box("Bitis", new Vector2(FinishX, -0.75f), new Vector2(0.15f, 2.5f),
-            finishColor, false);
+        // Önce yüksel, sonra alçak ve iki parçalı üçüncü platformdan zemine dön.
+        CreatePlatform("Platform 1", 10, 18, -0.4f);
+        CreatePlatform("Platform 2", 20, 28, 0.6f);
+        CreatePlatform("Platform 3 A", 29, 32, -0.65f);
+        CreatePlatform("Platform 3 B", 33, 36, -0.65f);
+        CreateObstacle(3.5f, -2);
+        CreateObstacle(14.5f, -0.4f);
+        CreateObstacle(24, 0.6f);
+        CreateObstacle(41, -2);
         GameObject actor = new GameObject("Karakter");
         actor.transform.SetParent(transform, false);
         actor.transform.position = new Vector2(-8, -1.6f);
@@ -168,7 +174,9 @@ public class JumpPrototype : MonoBehaviour
         player.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
         player.interpolation = RigidbodyInterpolation2D.Interpolate; // Görüntüdeki hareketi yumuşatır.
         character = actor.AddComponent<PrototypeCharacter>();
-        character.Initialize(player, playerCollider, floor, material, squareNeon, squareBody, squareGlow);
+        character.Initialize(player, playerCollider, walkableSurfaces, material, squareNeon, squareBody, squareGlow);
+        stage = gameObject.AddComponent<NeonStage>();
+        stage.Initialize(sprite, material, gameCamera, player, character, platforms, obstacles, FinishX);
         account = gameObject.AddComponent<GameAccountClient>();
         account.Initialize(apiBaseUrl);
         gameObject.AddComponent<PrototypeInterface>().Initialize(this, account, squareNeon, backgroundColor);
@@ -190,19 +198,46 @@ public class JumpPrototype : MonoBehaviour
         return box;
     }
 
+    private void CreatePlatform(string title, float left, float right, float top)
+    {
+        // top yürünebilir üst yüzeyin Y değeridir; kalınlık 0.5, merkez top - 0.25 olur.
+        // Tek yönlü effector alttan geçişe izin verir. Üstüne inince zıplanabilir.
+        GameObject deck = Box(title, new Vector2((left + right) * 0.5f, top - 0.25f),
+            new Vector2(right - left, 0.5f), new Color(0.08f, 0.29f, 0.42f), true);
+        BoxCollider2D collider = deck.GetComponent<BoxCollider2D>();
+        collider.usedByEffector = true;
+        PlatformEffector2D effector = deck.AddComponent<PlatformEffector2D>();
+        effector.useOneWay = true;
+        effector.useSideFriction = false;
+        effector.useSideBounce = false;
+        walkableSurfaces.Add(collider);
+        platforms.Add(collider);
+    }
+
+    private void CreateObstacle(float x, float surfaceY)
+    {
+        // Engel 0.8 x 0.8'dir. NeonStage sonradan yalnız görünümünü giydirir;
+        // parıltı veya pahlı köşe, çarpışma boyutunu büyütmez.
+        GameObject block = Box("Engel", new Vector2(x, surfaceY + 0.4f),
+            new Vector2(0.8f, 0.8f), Color.Lerp(backgroundColor, obstacleColor, 0.55f), true);
+        obstacles.Add(block.GetComponent<Collider2D>());
+    }
+
     // Tek, parlak çizgi yerine üst kenarı ve ön yüzeyi olan platform panelleri.
     // Çarpışma yüzeyi floor üzerindedir. Bu paneller yalnız görünümü oluşturur.
     private void CreateStageSurface()
     {
+        // Bu doku ve ScreenSpotlight2D malzemesi görseldir; zemini taşıyan floor collider'ıdır.
+        // Uzak yüzeyin saydamlaşması, karenin zeminden düşmesine neden olmaz.
         const int width = 192, height = 64;
         Color[] pixels = new Color[width * height];
-        Color face = Color.Lerp(backgroundColor, new Color(0.14f, 0.18f, 0.24f), 0.65f);
-        Color edge = Color.Lerp(squareNeon, new Color(0.7f, 0.78f, 0.86f), 0.85f);
+        Color face = Color.Lerp(backgroundColor, new Color(0.13f, 0.26f, 0.36f), 0.8f);
+        Color edge = Color.Lerp(squareNeon, Color.white, 0.25f);
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                Color color = Color.Lerp(face * 0.28f, face, y / 63f);
+                Color color = Color.Lerp(face * 0.45f, face, y / 63f);
                 if (y >= 59) color = Color.Lerp(face, edge, (y - 59) / 4f);
                 if (x < 2 || x >= width - 2) color *= 0.28f;
                 if ((x == 15 || x == width - 16) && y < 57) color *= 0.55f;
@@ -217,7 +252,7 @@ public class JumpPrototype : MonoBehaviour
         stageSurfaceTexture.SetPixels(pixels);
         stageSurfaceTexture.Apply(false, true);
         stageSurfaceSprite = Sprite.Create(stageSurfaceTexture, new Rect(0, 0, width, height), Vector2.one * 0.5f, 64);
-        for (int i = 0; i < 18; i++)
+        for (int i = 0; i < 22; i++)
         {
             GameObject panel = new GameObject("Platform paneli");
             panel.transform.SetParent(transform, false);
@@ -274,6 +309,8 @@ public class JumpPrototype : MonoBehaviour
     // Unity fizik adımlarında çalışır. Kare hızı değişse de fizik düzenli adımlarla ilerler.
     private void FixedUpdate()
     {
+        // Akış: tur/çarpışma kontrolü → zemin teması → tek zıplama isteği → hızı uygula.
+        // Engelin yaklaşması zıplama üretmez; yalnız klavye veya seçili kaynağın olayı üretir.
         if (account == null || !account.IsAuthenticated || account.IsBusy) { jumpPending = false; return; }
         if (!running) { jumpPending = false; return; }
         if (!roundStarted || Time.time < runStartsAt) { jumpPending = false; return; }
@@ -285,6 +322,7 @@ public class JumpPrototype : MonoBehaviour
         if (player.position.x >= FinishX) { Finish("Finish reached!"); return; }
         if (player.position.y < -5) { Finish("You fell. Press R to reset."); return; }
         Vector2 velocity = player.linearVelocity;
+        bool onFloor = character.IsGrounded;
         // Radar/simülasyon hazır değilken kareyi engele yürütme.
         // İlk geçerli zıplama gerçekleştiğinde yürüyüş ve tur süresi birlikte başlar.
         if (waitingForInput && !jumpPending)
@@ -296,12 +334,16 @@ public class JumpPrototype : MonoBehaviour
         // Yatay hız doğrudan hedef değere atanır. Kademeli yatay hızlanma uygulanmaz.
         // Otomatik modda +moveSpeed, manuel modda yön * moveSpeed kullanılır.
         velocity.x = waitingForInput ? 0 : (autoRun ? moveSpeed : horizontal * moveSpeed);
+        bool jumpApplied = false;
         // İstek yalnız bu fizik adımında kullanılır; havada bekletilip inişte çalışmaz.
         // Zıplama için hem istek hem zemin teması gerekir. Havada ikinci kez zıplanmaz.
-        if (jumpPending && playerCollider.IsTouching(floor) && velocity.y <= 0.05f)
+        if (jumpPending && onFloor && velocity.y <= 0.05f)
         {
             velocity.y = jumpSpeed; // Zıplamanın ilk dikey hızı burada uygulanır.
+            jumpApplied = true;
             jumps++;
+            stage.EmitJump(player.position);
+            // Efekt, gerçek zemin kontrolünden sonra başlar; bir paketin gelmesi tek başına yetmez.
             jumpStatus = "Jump applied";
             if (waitingForInput)
             {
@@ -311,8 +353,11 @@ public class JumpPrototype : MonoBehaviour
             }
         }
         else if (jumpPending)
-            jumpStatus = playerCollider.IsTouching(floor) ? "Still moving upward" : "No floor contact / airborne";
+            jumpStatus = onFloor ? "Still moving upward" : "No floor contact / airborne";
         jumpPending = false;
+        // Kamera zıplamasında kare engelin üstünden biraz daha uzağa ilerlesin.
+        if (source == InputSource.Camera && !waitingForInput && (!onFloor || jumpApplied))
+            velocity.x *= CameraAirSpeedMultiplier;
         // Hız zaten birim/saniye cinsindedir. Burada deltaTime ile çarpılmaz.
         // Sonraki adımlarda yerçekimi dikey hızı azaltır, tepe noktasından sonra negatife çevirir.
         player.linearVelocity = velocity;
@@ -325,7 +370,9 @@ public class JumpPrototype : MonoBehaviour
         Vector3 position = gameCamera.transform.position;
         // transform.position, Rigidbody2D'nin görüntü kareleri arasındaki yumuşatılmış konumudur.
         // Kamerayı doğrudan fizik adımlarına bağlamak görüntüde küçük sıçramalar oluşturabilir.
-        float target = Mathf.Clamp(player.transform.position.x + 2, -6, FinishX - 2);
+        // Kamera girdisinde kare başlangıçta ekranın sağ tarafına ilerlesin.
+        float lookAhead = source == InputSource.Camera ? -0.5f : 2f;
+        float target = Mathf.Clamp(player.transform.position.x + lookAhead, -6, FinishX - 2);
         position.x = Mathf.Lerp(position.x, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
         gameCamera.transform.position = position;
         if (groundMaterial != null)
@@ -344,6 +391,7 @@ public class JumpPrototype : MonoBehaviour
         player.linearVelocity = Vector2.zero;
         player.simulated = false;
         character.FinishPose(player.position.x >= FinishX);
+        if (player.position.x >= FinishX) stage.EmitFinish(player.position);
         jumpPending = false;
         // Bitmiş tur bir kez kaydedilir. Skor şimdilik parkur ilerlemesi * 1000'dir.
         int duration = Mathf.RoundToInt(Mathf.Clamp((Time.time - runStartsAt) * 1000, 0, int.MaxValue));
@@ -360,6 +408,7 @@ public class JumpPrototype : MonoBehaviour
         player.position = new Vector2(-8, -1.6f);
         player.linearVelocity = Vector2.zero;
         character.ResetPose();
+        if (stage != null) stage.ResetEffects();
         gameCamera.transform.position = new Vector3(-6, 0, -10);
         running = true;
         roundStarted = false;
@@ -537,7 +586,7 @@ public class JumpPrototype : MonoBehaviour
         + "\n" + connectionStatus + "\nLast rejection / " + lastRejection
         + "\nLocal SIM " + localSimulationRequests + " · Jump status / " + jumpStatus
         + "\nRun / " + (!roundStarted ? "Not started" : !running ? "Finished" : Countdown > 0 ? "Countdown" : waitingForInput ? "Waiting for first event" : "Active")
-        + " · Floor / " + (playerCollider != null && floor != null && playerCollider.IsTouching(floor) ? "yes" : "no")
+        + " · Floor / " + (character != null && character.IsGrounded ? "yes" : "no")
         + "\nDisplay / approx. " + Mathf.RoundToInt(1 / Mathf.Max(Time.smoothDeltaTime, 0.001f)) + " FPS";
 
     // Yerel simülasyon, UDP üreticisi açmadan aynı tur/fizik kontrollerini sınar.

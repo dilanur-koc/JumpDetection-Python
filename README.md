@@ -1,7 +1,11 @@
 # NEON / LINK — Radar destekli 2D platform oyunu
 
 Unity 6.6 oyunu, Python LD2450 radar köprüsü ve ASP.NET Core / SQL Server hesap hizmeti.
-Kamera prototipi karşılaştırma aracı olarak korunur. Radar hâlâ deneysel hareket adayları üretir.
+Kamera üst gövde moduyla oynanabilir girdi sağlar. Radar hâlâ deneysel hareket adayları üretir.
+
+**25 Kasım gösterimi:** CAMERA ile oynanabilen neon şehir parkuru; saydam zemin,
+üç platform, otomatik mesafe kalibrasyonu ve kısa zıplama efektleri.
+[Hocaya anlatım rehberi: güncel dosya haritası, hız/ivme ve çalıştırma adımları](docs/2026-11-25-demo-guide.md).
 
 ## Hızlı başlangıç
 
@@ -68,7 +72,7 @@ takibi suruyorsa kisa durulmadan sonra yeni aday degerlendirilebilir.
 Hedef gercekten kaybolursa yine baslangic kalibrasyonu gerekir.
 6 Kasim'da kullanici istegiyle hiz 16'dan 12 cm/sn'ye, duzlemsel yer
 degistirme 60'tan 30 mm'ye indirildi. Sure ve taze ornek kontrolleri korundu.
-Yeni denemelerin ozetinde `counter_version=burst-quiet-v5-demo` saklanir.
+Yeni denemelerin ozetinde `counter_version=burst-quiet-v6-demo-confirmation` saklanir.
 Onceki v1/v2 kayitlari eski ayarlar ve sonuclariyla korunur. Daha dusuk esikler
 kucuk hareketleri denemek icindir; fiziksel ziplama dogrulugu saglamaz ve
 yurumede yanlis sayimi artirabilir. Acik radar penceresi yeni kodu almaz;
@@ -195,11 +199,14 @@ bakın. Güncel uygulama ve doğrulama sınırları 5 Kasım özetinde açıklan
 ### Radar oyun alanı
 
 Uzakta raporlanan ek hedefler tek kişilik sayacı yeniden kalibrasyona döndürebilir.
-Sayaç penceresindeki **Oyun alanı yarıçapı (mm)** ile yalnız oyuncunun alanını seçin;
-`2500`, radarın merkezinden 2,5 metre yarıçap demektir. Varsayılan `Tümü`dür.
+Sayaç penceresindeki **Oyun alanı (mm)** ile yalnız oyuncunun alanını seçin;
+`2500`, radarın merkezinden 2,5 metre yarıçap demektir. Varsayılan normal
+sayaçta `Tümü`, `--demo-game` ile açılan pencerede `1800` mm'dir.
 Komutta `--counter-window --game-events --max-distance-mm 2500` kullanılabilir.
 Seçim Başlat sırasında uygulanır ve kayıt özetinin `settings.max_distance_mm`
 alanında saklanır. Ham ölçümler alan dışındaki hedefler dahil korunur.
+Pencere her hedefin uzaklığını ve seçilen alanın dışında kalıp kalmadığını gösterir.
+`800-2500` seçimi radara 800 mm'den yakın ve 2500 mm'den uzak hedefleri eler.
 Alan içinde birden fazla hedef görülürse sayaç yine adayı iptal eder.
 Bu seçenek hareketi dikey zıplama olarak doğrulamaz.
 
@@ -209,7 +216,8 @@ Başlat sonrasında kalibrasyon tamamlanınca Durdur'a veya pencerenin kapatılm
 kadar olay gönderimi sürer; `--seconds 120` oyun köprüsünü iki dakikada kesmez.
 Süreli deney için Başlat'tan önce Sürekli oyun seçimini kaldırın.
 Özet kaydında sürekli oturumlar `session_mode: continuous`, `test_duration_s: null`
-olarak belirtilir. İlk kalibrasyon yine 20 saniyede tamamlanamazsa oturum durur.
+olarak belirtilir. Sürekli demo tek, sabit hedefi Başlat'tan sonra bekler;
+diğer oturumlarda ilk kalibrasyon 20 saniyede tamamlanamazsa oturum durur.
 
 
 Radarla oyun için Unity ve radar penceresi birlikte açık kalır. Başlatma sırası
@@ -217,12 +225,12 @@ Radarla oyun için Unity ve radar penceresi birlikte açık kalır. Başlatma s�
 
 ### Gösterim için radar demo modu
 
-`python -m radar --counter-window --game-events --max-distance-mm 2500 --demo-game`
+`python -m radar --counter-window --game-events --demo-game`
 ile açıkça seçilir. Normal sayaç varsayılanı değişmez. Pencerede **DEMO** seçimi,
 aktif başlıkta demo bilgisi, kayıt ayarlarında `demo_mode: true` görünür.
-Demo tek, kalibre edilmiş hedefin en az 12 cm/sn hız ve 15 mm yer değiştirme
-ölçümünde hemen hareket olayı gönderir; iki ardışık hız örneğini veya hareket
-sonunu beklemez. Sonraki tetik için 0,8 saniye bekleme ve kısa durulma gerekir.
+Demo tek, kalibre edilmiş hedefte art arda iki ölçümde en az 12 cm/sn hız
+ve tetik anında en az 15 mm yer değiştirme görünce olay gönderir. Hareketin
+sonunu beklemez. Sonraki tetik için en az 0,8 saniye ve kısa durulma gerekir.
 Veri kesintisi, hedef kaybı, alan içinde çoklu hedef ve 500 mm konum sıçraması
 korumaları sürer. Oyun kaynağı RADAR olarak seçilir; gönderim gerçek radar
 hareketinden gelir. Oturmak, yürümek veya başka hareketler de tetikleyebilir;

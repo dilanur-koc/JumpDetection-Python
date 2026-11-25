@@ -27,6 +27,8 @@ def main(*, camera_index=0, game_port=None, upper_body=False):
         num_poses=1
     )
 
+    # OpenCV kamerayı okur ve ekrana çizer; MediaPipe görüntüden vücut noktalarını bulur.
+    # Hareket kararını aşağıda CameraGameDetector verir; görüntü doğrudan Unity'ye gitmez.
     landmarker = vision.PoseLandmarker.create_from_options(options)
     kamera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
 
@@ -102,6 +104,8 @@ def main(*, camera_index=0, game_port=None, upper_body=False):
                 if noktalar:
                     sample = (UpperBodySample.from_landmarks(noktalar, w / h) if upper_body
                               else BodySample.from_landmarks(noktalar))
+                # Karar True olduğunda tek jump_request gönderilir. UDP sayısı,
+                # Unity'nin gerçekten zıpladığı anlamına gelmez; oyun ayrıca denetler.
                 if game_detector.update(simdi, sample):
                     try:
                         publisher.send_jump()

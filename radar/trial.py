@@ -27,9 +27,9 @@ class TrialClock:
 
     def advance(self, now, ready):
         # Hazırlık en az 5 saniyedir. Sayaç da hazırsa asıl deney süresi başlar.
-        # Kararlı hedef 20 saniye içinde bulunamazsa deney başlamadan sonlanır.
+        # Süreli deneylerde hazır olmayan oturum sonlanır; sürekli demo bekleyebilir.
         if self.phase == "prepare":
-            if now - self.started_at >= self.preparation_limit:
+            if self.preparation_limit is not None and now - self.started_at >= self.preparation_limit:
                 self.phase = "no_baseline"
             elif now - self.started_at >= self.preparation and ready:
                 self.phase = "active"
@@ -113,6 +113,7 @@ class TrialRecorder:
         self.summary["candidate_events"] += 1
         self.events.write(json.dumps({"elapsed_s": record["elapsed_s"], "utc": record["utc"],
                                       "count": count, "details": details}) + "\n")
+        self.events.flush()
 
     def save_summary(self):
         self.summary_path.write_text(json.dumps(self.summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

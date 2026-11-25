@@ -78,7 +78,7 @@ Unity sahnesinde Deneysel radar seçilir. Ardından PySerial kurulu sistem
 Python'u ile:
 
 ```powershell
-python -m radar --counter-window --game-events --port COM5 --max-distance-mm 2500 --demo-game
+python -m radar --counter-window --game-events --port COM5 --demo-game
 ```
 
 Radar penceresinde Başlat'a basıp hazırlığın bitmesi beklenir. Aktif

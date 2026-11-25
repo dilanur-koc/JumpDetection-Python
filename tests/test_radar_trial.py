@@ -38,6 +38,15 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(clock.advance(20, False), "no_baseline")
         self.assertIsNone(clock.active_at)
 
+    def test_waiting_demo_starts_only_after_a_late_calibration(self):
+        clock = TrialClock(duration=None, preparation_limit=None)
+        clock.start(0)
+        self.assertEqual(clock.advance(20, False), "prepare")
+        self.assertEqual(clock.advance(60, False), "prepare")
+        self.assertIsNone(clock.active_at)
+        self.assertEqual(clock.advance(61, True), "active")
+        self.assertEqual(clock.active_at, 61)
+
     def test_no_data_preparation_times_out(self):
         clock = TrialClock()
         clock.start(10)
@@ -75,7 +84,7 @@ class TrialTests(unittest.TestCase):
             self.assertEqual(summary["single_target_active_frames"], 1)
             self.assertEqual(summary["settings"]["motion_speed_cm_s"], 12)
             self.assertEqual(summary["settings"]["displacement_mm"], 30)
-            self.assertEqual(summary["counter_version"], "burst-quiet-v5-demo")
+            self.assertEqual(summary["counter_version"], "burst-quiet-v6-demo-confirmation")
             recorder.report_actual(0)
             self.assertEqual(json.loads(recorder.summary_path.read_text(encoding="utf-8"))["reported_jump_count"], 0)
             with recorder.base.with_suffix(".csv").open(encoding="utf-8") as stream:
