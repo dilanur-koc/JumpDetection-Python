@@ -11,23 +11,23 @@ public sealed class PrototypeInterface : MonoBehaviour
     private GameAccountClient account;
     private Color accent, background;
     private Texture2D backdrop;
+    private Texture2D menuShade;
     private string userName = "", password = "";
     private bool registering, history, diagnostics, hadSession, showFps;
-    private GUIStyle label, small, caption, heading, brand, menu, button, field, number;
-    private readonly string[] inputNames = { "KEYBOARD", "SIMULATION", "RADAR" };
+    private GUIStyle label, small, caption, heading, brand, brandShadow, menu, button, field, number;
+    private readonly string[] inputNames = { "KEYBOARD", "SIMULATION", "RADAR DEMO", "CAMERA" };
 
     // Play sırasında kod yenilenirse eski ekrandan kalan GUIStyle nesneleri tekrar kullanılmaz.
     private void OnEnable()
     {
         label = null;
-        backdrop = Resources.Load<Texture2D>("MenuBackdrop");
+        LoadBackdrop();
     }
 
     public void Initialize(JumpPrototype owner, GameAccountClient client, Color neon, Color backdropColor)
     {
         game = owner; account = client; accent = neon; background = backdropColor;
-        // Tek sabit resim bir kez yüklenir. Küp animasyonu, paralaks ve piksel üretimi yoktur.
-        backdrop = Resources.Load<Texture2D>("MenuBackdrop");
+        LoadBackdrop();
         showFps = PlayerPrefs.GetInt("NeonLink.ShowFPS", 0) == 1;
     }
 
@@ -66,6 +66,23 @@ public sealed class PrototypeInterface : MonoBehaviour
                 else if (game.Countdown > 0)
                     GUI.Label(new Rect(width / 2 - 90, height / 2 - 80, 180, 150),
                         Mathf.CeilToInt(game.Countdown).ToString(), number);
+                else if (game.AwaitingInput)
+                {
+                    GUI.Label(new Rect(width / 2 - 230, height / 2 - 110, 460, 45),
+                        game.SourceSelection switch
+                        {
+                            1 => "WAITING FOR SIMULATION",
+                            2 => "RADAR DEMO",
+                            _ => "JUMP TO START",
+                        }, heading);
+                    GUI.Label(new Rect(width / 2 - 230, height / 2 - 54, 460, 50),
+                        game.SourceSelection switch
+                        {
+                            1 => "Press SPACE or SIM JUMP to start the run.",
+                            2 => "When the radar window is ready, move to start.",
+                            _ => "Wait for READY in the camera window, then jump.",
+                        }, small);
+                }
                 if (diagnostics) DrawDiagnostics(width, height);
             }
             else
@@ -92,17 +109,50 @@ public sealed class PrototypeInterface : MonoBehaviour
     private void DrawBackdrop(float width, float height)
     {
         Fill(new Rect(0, 0, width, height), background);
+        Color previous = GUI.color;
+        GUI.color = previous * new Color(1, 1, 1, 0.62f);
         if (backdrop != null) GUI.DrawTexture(new Rect(0, 0, width, height), backdrop, ScaleMode.ScaleAndCrop);
+        GUI.color = previous;
+        // Şehir sağda açık kalır; yazıların arkasında yumuşak mor bir geçiş vardır.
+        GUI.DrawTexture(new Rect(0, 0, width, height), menuShade, ScaleMode.StretchToFill);
+        Fill(new Rect(0, height - 58, width, 58), new Color(0.055f, 0.025f, 0.13f, 0.76f));
+        Fill(new Rect(0, height - 59, width, 1), new Color(0.9f, 0.3f, 0.8f, 0.4f));
+    }
+
+    private void LoadBackdrop()
+    {
+        // Giriş ve oyun aynı resmi kullanır; burada resim sabittir, oyunda NeonStage kaydırır.
+        backdrop = Resources.Load<Texture2D>("NeonCityBackdrop");
+        if (backdrop == null) backdrop = Resources.Load<Texture2D>("MenuBackdrop");
+        if (menuShade != null) return;
+        // Ayrı bir yeni görsel yerine küçük bir alfa dokusu: sol koyu/okunur, sağ şehir açık.
+        menuShade = new Texture2D(128, 1, TextureFormat.RGBA32, false);
+        menuShade.wrapMode = TextureWrapMode.Clamp;
+        menuShade.filterMode = FilterMode.Bilinear;
+        Color[] pixels = new Color[128];
+        for (int x = 0; x < pixels.Length; x++)
+        {
+            float blend = Mathf.SmoothStep(0, 1, (x / 127f - 0.15f) / 0.65f);
+            pixels[x] = new Color(0.065f, 0.025f, 0.15f, Mathf.Lerp(0.94f, 0.05f, blend));
+        }
+        menuShade.SetPixels(pixels);
+        menuShade.Apply(false, true);
     }
 
     private void DrawHome(float left, float height)
     {
+        // Arayüz koordinatları OnGUI'deki 1280x720 ölçeğindedir; ekran büyüyünce birlikte ölçeklenir.
         float top = Mathf.Max(106, (height - 500) / 2);
         GUI.Label(new Rect(left + 3, top, 450, 24), "MOVE WITH THE SIGNAL", caption);
+        GUI.Label(new Rect(left + 2, top + 36, 580, 88), "NEON / LINK", brandShadow);
         GUI.Label(new Rect(left, top + 34, 580, 88), "NEON / LINK", brand);
         Fill(new Rect(left + 3, top + 140, 48, 2), accent);
+        Fill(new Rect(left + 57, top + 140, 16, 2), new Color(1, 0.3f, 0.75f));
         GUI.Label(new Rect(left + 3, top + 164, 410, 62), "Find your rhythm.\nMake the jump.", label);
-        if (MenuButton(new Rect(left, top + 258, 350, 50), "PLAY"))
+        Rect play = new Rect(left, top + 258, 350, 50);
+        Fill(play, new Color(0.2f, 0.09f, 0.35f, 0.65f));
+        Fill(new Rect(play.x, play.y, 3, play.height), accent);
+        if (MenuButton(new Rect(play.x + 18, play.y, play.width - 18, play.height), "PLAY  ›"))
             page = account.IsAuthenticated ? Page.Levels : Page.Account;
         if (MenuButton(new Rect(left, top + 316, 350, 46), "SETTINGS")) page = Page.Settings;
         if (MenuButton(new Rect(left, top + 370, 350, 46), "HOW TO PLAY")) page = Page.Controls;
@@ -140,7 +190,7 @@ public sealed class PrototypeInterface : MonoBehaviour
         GUI.Label(new Rect(rect.x, rect.y - 28, rect.width, 22), text, caption);
         bool hover = rect.Contains(Event.current.mousePosition);
         // Tüm GUIStyle durumları aynı: Unity'nin varsayılan kabartma/hover dokuları kullanılmaz.
-        Fill(rect, new Color(0.04f, 0.08f, 0.12f, hover ? 0.28f : 0.17f));
+        Fill(rect, new Color(0.16f, 0.08f, 0.26f, hover ? 0.72f : 0.55f));
         Fill(new Rect(rect.x, rect.yMax - 1, rect.width, 1), new Color(0.65f, 0.87f, 0.94f, hover ? 0.55f : 0.25f));
         GUI.SetNextControlName(control);
         return secret ? GUI.PasswordField(rect, value, '•', length, field) : GUI.TextField(rect, value, length, field);
@@ -170,7 +220,7 @@ public sealed class PrototypeInterface : MonoBehaviour
                 GUI.Label(new Rect(card.x + 16, card.y + 93, 132, 45), available ? "FIRST CONTACT" : "COMING SOON", caption);
                 GUI.Label(new Rect(card.x + 16, card.y + 138, 132, 20), available ? "READY TO PLAY" : "IN DEVELOPMENT", caption);
             }
-            int selection = GUI.Toolbar(new Rect(left, top + 340, 500, 40), game.SourceSelection, inputNames, button);
+            int selection = GUI.Toolbar(new Rect(left, top + 340, 620, 40), game.SourceSelection, inputNames, button);
             if (selection != game.SourceSelection) game.SelectSource(selection);
             GUI.Label(new Rect(left, top + 392, 850, 38), SourceHint(), small);
             if (ActionButton(new Rect(left, top + 445, 250, 46), "START RUN")) { game.RetryRun(); page = Page.Run; }
@@ -183,8 +233,10 @@ public sealed class PrototypeInterface : MonoBehaviour
 
     private string SourceHint()
     {
-        return game.SourceSelection == 2 ? "Wait for the radar window to be ready, then start. Radar detection is experimental."
-            : game.SourceSelection == 1 ? "Start the run, wait for the countdown, then send jump events from the Python simulator."
+        if (game.IsCameraPractice) return "Open the Python camera window and follow its framing instructions.";
+
+        return game.SourceSelection == 2 ? "Motion demo: the radar can react to movements other than jumps. Select CAMERA for jump tracking."
+            : game.SourceSelection == 1 ? "After the countdown, press SPACE or SIM JUMP. Python simulator events also work."
             : "Automatic movement. Press SPACE to jump. Press R to return to run selection.";
     }
 
@@ -194,10 +246,19 @@ public sealed class PrototypeInterface : MonoBehaviour
         GUI.Label(new Rect(36, 28, 270, 26), "01  /  FIRST CONTACT", caption);
         GUI.Label(new Rect(36, 56, 270, 24), account.User.userName, small);
         GUI.enabled = !account.IsBusy;
+        if (game.IsRunning && TextButton(new Rect(width - 328, 26, 90, 30), "RETRY")) game.RetryRun();
         if (TextButton(new Rect(width - 225, 26, 90, 30), "MENU")) { game.ReturnToLobby(); page = Page.Levels; }
         GUI.enabled = true;
         if (TextButton(new Rect(width - 122, 26, 90, 30), "DEBUG")) diagnostics = !diagnostics;
         GUI.Label(new Rect(36, height - 42, 350, 22), game.SourceLabel, caption);
+        if (game.SourceSelection == 1 && game.IsRunning)
+        {
+            GUI.enabled = game.CanSimulateJump;
+            if (ActionButton(new Rect(36, height - 108, 210, 46), "SIM JUMP  /  SPACE")) game.SimulateJump();
+            GUI.enabled = true;
+        }
+        if (game.SourceSelection != 0 && game.IsRunning)
+            GUI.Label(new Rect(36, 92, width - 310, 62), game.InputStatus, small);
     }
 
     private void DrawResult(float width, float height)
@@ -206,7 +267,8 @@ public sealed class PrototypeInterface : MonoBehaviour
         Fill(new Rect(left - 28, top - 22, 586, 280), new Color(0.015f, 0.025f, 0.055f, 0.72f));
         GUI.Label(new Rect(left, top, 530, 50), game.Progress >= 1 ? "RUN COMPLETE" : "TRY AGAIN", heading);
         GUI.Label(new Rect(left, top + 66, 530, 30), "SCORE  " + game.Score + "     /     JUMPS  " + game.JumpCount, small);
-        GUI.Label(new Rect(left, top + 108, 530, 36), account.Message, small);
+        GUI.Label(new Rect(left, top + 104, 530, 28), game.ResultText, small);
+        GUI.Label(new Rect(left, top + 136, 530, 32), game.IsCameraPractice ? "Camera practice · score for this run" : account.Message, small);
         GUI.enabled = !account.IsBusy;
         if (ActionButton(new Rect(left, top + 174, 245, 44), "RETRY")) game.RetryRun();
         if (TextButton(new Rect(left + 275, top + 180, 245, 32), "SELECT A RUN")) { game.ReturnToLobby(); page = Page.Levels; }
@@ -252,13 +314,13 @@ public sealed class PrototypeInterface : MonoBehaviour
         if (TextButton(new Rect(left, top - 50, 120, 32), "‹  HOME")) page = Page.Home;
         GUI.Label(new Rect(left, top, 520, 60), "HOW TO PLAY", heading);
         GUI.Label(new Rect(left, top + 95, 450, 330),
-            "Keep moving. Jump at the right moment.\n\nKEYBOARD\nSPACE to jump. R to reset.\n\nRADAR\nConnect the sensor and run the Python radar bridge. Detection is experimental.\n\nSIMULATION\nSend jump events from the Python simulator.", small);
+            "Keep moving. Jump at the right moment.\n\nKEYBOARD\nSPACE to jump. R to reset.\n\nRADAR\nConnect the sensor and run the Python radar bridge. Detection is experimental.\n\nSIMULATION\nSPACE or SIM JUMP to jump. Python simulator events also work.", small);
     }
 
     private void DrawDiagnostics(float width, float height)
     {
-        Fill(new Rect(width - 440, height - 210, 408, 150), new Color(0.01f, 0.02f, 0.04f, 0.72f));
-        GUI.Label(new Rect(width - 424, height - 196, 376, 125), game.DiagnosticText, small);
+        Fill(new Rect(width - 440, height - 252, 408, 192), new Color(0.01f, 0.02f, 0.04f, 0.72f));
+        GUI.Label(new Rect(width - 424, height - 238, 376, 170), game.DiagnosticText, small);
     }
 
     private bool MenuButton(Rect rect, string text)
@@ -294,12 +356,13 @@ public sealed class PrototypeInterface : MonoBehaviour
 
     private void CreateStyles()
     {
-        Color white = new Color(0.9f, 0.95f, 1);
+        Color white = new Color(0.96f, 0.94f, 1);
         label = TextStyle(22, white);
-        small = TextStyle(16, new Color(0.66f, 0.75f, 0.83f));
-        caption = TextStyle(13, new Color(0.6f, 0.74f, 0.8f));
+        small = TextStyle(16, new Color(0.8f, 0.82f, 0.94f));
+        caption = TextStyle(13, new Color(0.72f, 0.75f, 0.9f));
         heading = TextStyle(38, white); heading.fontStyle = FontStyle.Bold;
         brand = TextStyle(66, white); brand.fontStyle = FontStyle.Bold;
+        brandShadow = TextStyle(66, new Color(1, 0.25f, 0.7f, 0.5f)); brandShadow.fontStyle = FontStyle.Bold;
         menu = TextStyle(25, white, TextAnchor.MiddleLeft); menu.hover.textColor = accent;
         button = TextStyle(15, white, TextAnchor.MiddleCenter);
         button.hover.textColor = button.onNormal.textColor = button.onHover.textColor = accent;
@@ -322,5 +385,10 @@ public sealed class PrototypeInterface : MonoBehaviour
 #else
         Application.Quit();
 #endif
+    }
+
+    private void OnDestroy()
+    {
+        if (menuShade != null) Destroy(menuShade);
     }
 }

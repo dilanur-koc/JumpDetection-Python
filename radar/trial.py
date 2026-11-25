@@ -27,14 +27,14 @@ class TrialClock:
 
     def advance(self, now, ready):
         # Hazırlık en az 5 saniyedir. Sayaç da hazırsa asıl deney süresi başlar.
-        # Kararlı hedef 20 saniye içinde bulunamazsa deney başlamadan sonlanır.
+        # Süreli deneylerde hazır olmayan oturum sonlanır; sürekli demo bekleyebilir.
         if self.phase == "prepare":
-            if now - self.started_at >= self.preparation_limit:
+            if self.preparation_limit is not None and now - self.started_at >= self.preparation_limit:
                 self.phase = "no_baseline"
             elif now - self.started_at >= self.preparation and ready:
                 self.phase = "active"
                 self.active_at = now
-        if self.phase == "active" and now - self.active_at >= self.duration:
+        if self.phase == "active" and self.duration is not None and now - self.active_at >= self.duration:
             # Radar yeni veri göndermese bile bilgisayarda geçen süreyle deney biter.
             self.phase = "done"
         return self.phase
@@ -44,7 +44,7 @@ class TrialClock:
         if self.phase == "prepare":
             return max(0.0, self.preparation - (now - self.started_at))
         if self.phase == "active":
-            return max(0.0, self.duration - (now - self.active_at))
+            return None if self.duration is None else max(0.0, self.duration - (now - self.active_at))
         return 0.0
 
 
@@ -60,9 +60,11 @@ class TrialRecorder:
         self.summary = {
             "started_utc": datetime.now(timezone.utc).isoformat(),
             "label": label, "port": port, "baud": baud,
-            "test_duration_s": duration, "settings": asdict(settings),
+            "test_duration_s": duration, "session_mode": "continuous" if duration is None else "timed",
+            "settings": asdict(settings),
             "counter_version": COUNTER_VERSION,
-            "count_semantics": "Experimental movement candidates; not verified jumps",
+            "count_semantics": ("DEMO radar motion triggers; not verified jumps" if settings.demo_mode
+                                else "Experimental movement candidates; not verified jumps"),
             "timestamp_semantics": "Host receive time; frame uses its final chunk time",
             "reported_jump_count": None, "frames": 0, "candidate_events": 0,
             "active_frames": 0, "single_target_active_frames": 0,
@@ -111,6 +113,7 @@ class TrialRecorder:
         self.summary["candidate_events"] += 1
         self.events.write(json.dumps({"elapsed_s": record["elapsed_s"], "utc": record["utc"],
                                       "count": count, "details": details}) + "\n")
+        self.events.flush()
 
     def save_summary(self):
         self.summary_path.write_text(json.dumps(self.summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

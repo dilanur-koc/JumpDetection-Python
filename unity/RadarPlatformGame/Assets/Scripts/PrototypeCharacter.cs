@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 // Animasyon yalnız görsel çocuğu döndürür. Fizik gövdesi dik kalır.
@@ -6,7 +7,8 @@ public sealed class PrototypeCharacter : MonoBehaviour
     // body gerçek fizik gövdesidir. visual onun altında çizilen neon karedir.
     // Görseli döndürmek, zemine veya engele temas eden Collider2D'yi döndürmez.
     private Rigidbody2D body;
-    private Collider2D actorCollider, ground;
+    private Collider2D actorCollider;
+    private IReadOnlyList<Collider2D> surfaces;
     private Transform visual;
     private SpriteRenderer image;
     private Sprite squareSprite;
@@ -15,12 +17,12 @@ public sealed class PrototypeCharacter : MonoBehaviour
     private bool finished, won;
 
     // JumpPrototype fizik gövdesini, zemini ve Inspector'daki renkleri bu metoda verir.
-    public void Initialize(Rigidbody2D actor, Collider2D collider, Collider2D floor,
+    public void Initialize(Rigidbody2D actor, Collider2D collider, IReadOnlyList<Collider2D> floors,
         Material material, Color neon, Color shell, float glowStrength)
     {
         body = actor;
         actorCollider = collider;
-        ground = floor;
+        surfaces = floors;
         visual = new GameObject("Neon kare").transform;
         visual.SetParent(transform, false);
         image = visual.gameObject.AddComponent<SpriteRenderer>();
@@ -52,12 +54,25 @@ public sealed class PrototypeCharacter : MonoBehaviour
         won = success;
     }
 
+    public bool IsGrounded
+    {
+        // floor ile sınırlı değildir: ilk, yüksek ve kesik platformların tüm yüzeylerini denetler.
+        // Görsel dönüş, bu collider listesini veya fizik gövdesinin yönünü değiştirmez.
+        get
+        {
+            if (actorCollider == null || surfaces == null) return false;
+            foreach (Collider2D surface in surfaces)
+                if (surface != null && actorCollider.IsTouching(surface)) return true;
+            return false;
+        }
+    }
+
     // Fizik hareketinden sonra yalnız görünümü günceller.
     private void LateUpdate()
     {
         if (body == null) return;
         Vector2 velocity = body.linearVelocity;
-        bool airborne = body.simulated && !actorCollider.IsTouching(ground); // Zemin teması yoksa havadadır.
+        bool airborne = body.simulated && !IsGrounded;
         if (finished)
         {
             float pulse = 1 + Mathf.Sin(Time.time * 5) * 0.035f; // Tur sonunda hafif büyüyüp küçülme.

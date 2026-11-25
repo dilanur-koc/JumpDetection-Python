@@ -8,6 +8,7 @@ doğrulamaz. İlk hedef, algılama kararını oyunun hareketinden ayırabilmekti
 flowchart LR
   S[Donanımsız simülasyon] --> P[Python olay göndericisi]
   R[Radarın aktif deneydeki hareket adayı] --> P
+  C[Kamera hareket tahmini] --> P
   P --> U[Unity: seçili kaynağı ve olayın güncelliğini denetle]
   U --> G[Karakter yerdeyse zıpla]
 ```
@@ -33,7 +34,7 @@ yazar. Bu zaman hareketin başlangıcı veya fiziksel gecikme ölçümü değild
 | Alan | Anlamı |
 | --- | --- |
 | `event_type` | `jump_request`: oyuna zıplama isteği |
-| `source` | `simulator`, `radar` veya gelecekte `camera` |
+| `source` | `simulator`, `radar` veya `camera` |
 | `evidence` | Sırasıyla `simulated`, `motion_candidate`, `camera_estimate` |
 | `experimental` | Radar/kamera için `true`; simülasyon için `false` |
 | `session_id` | Her gönderici oturumunda yeni 32 karakterli küçük harfli onaltılık kimlik |
@@ -42,8 +43,7 @@ yazar. Bu zaman hareketin başlangıcı veya fiziksel gecikme ölçümü değild
 
 Radarın her ölçüm paketi bir olay değildir. Sayaç aktif deneyde yeni aday
 saydığında bir olay oluşur. Hazırlıktaki aday gönderilmez. Mevcut radar
-denemesi süre sonunda biter; bu henüz kesintisiz oyun kontrol servisi değildir.
-Kamera kaynağı sözleşmede ayrılmıştır, kamera uygulaması henüz olay göndermez.
+penceresi süreli veya sürekli çalışabilir. `main.py --game-events` kamera olaylarını gönderir.
 
 Alıcı yalnız seçilen kaynağı kabul eder. Bozuk/bilinmeyen alanlı, 1000 ms
 veya daha eski, 250 ms'den fazla gelecekte görünen, yinelenen veya sıra
@@ -78,11 +78,11 @@ Unity sahnesinde Deneysel radar seçilir. Ardından PySerial kurulu sistem
 Python'u ile:
 
 ```powershell
-& "C:\Users\Dila\AppData\Local\Programs\Python\Python312\python.exe" -m radar --counter-window --game-events --port COM5 --seconds 20
+python -m radar --counter-window --game-events --port COM5 --demo-game
 ```
 
-Radar penceresinde Başlat'a basıp hazırlığın bitmesi beklenir. Yalnız aktif
-20 saniyede sayılan adaylar gönderilir. Deneme bittiğinde gönderim durur.
+Radar penceresinde Başlat'a basıp hazırlığın bitmesi beklenir. Aktif
+oturumdaki adaylar gönderilir. Sürekli oyun modunda Durdur gönderimi bitirir.
 Gönderilen olayın kimliği deneyin `.events.jsonl` kaydında; UDP gönderim
 sayısı `.summary.json` içinde saklanır. Bunlar oyunda gerçekleşen zıplama
 sayısı veya radarın doğruluk oranı olarak sunulmaz.
